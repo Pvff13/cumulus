@@ -24,6 +24,7 @@ fn main() {
         return ui::write_icon_files(std::path::Path::new(&dir));
     }
 
+    set_app_id();
     let options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
             .with_title("Cumulus")
@@ -39,6 +40,24 @@ fn main() {
     ) {
         eprintln!("cumulus: {e}");
         std::process::exit(1);
+    }
+}
+
+/// Same AppUserModelID the installer gives the Start-menu shortcut, so Windows
+/// treats the window, shortcut, taskbar pin and media overlay as one app
+/// (with its name and icon) instead of "cumulus.exe".
+fn set_app_id() {
+    #[cfg(windows)]
+    {
+        #[link(name = "shell32")]
+        unsafe extern "system" {
+            fn SetCurrentProcessExplicitAppUserModelID(app_id: *const u16) -> i32;
+        }
+        let id: Vec<u16> = "app.cumulus.player".encode_utf16().chain(Some(0)).collect();
+        // SAFETY: `id` is a NUL-terminated UTF-16 string that outlives the call.
+        unsafe {
+            SetCurrentProcessExplicitAppUserModelID(id.as_ptr());
+        }
     }
 }
 

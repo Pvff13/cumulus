@@ -38,24 +38,37 @@ pub fn rgba(size: u32) -> Vec<u8> {
     out
 }
 
-/// Debug builds: writes `icon.png` (256 px) and `icon.ico` for the installer
-/// (`cargo run -- --dev-icon assets`). The .ico simply wraps the PNG, which
-/// Windows has supported since Vista.
+/// Debug builds: writes `icon.png` (256 px) and a multi-size `icon.ico` for
+/// the exe resource and installer (`cargo run -- --dev-icon assets`). Each
+/// size is drawn natively so small taskbar icons stay sharp; entries are
+/// PNG-compressed, which Windows supports since Vista.
 #[cfg(debug_assertions)]
 pub fn write_files(dir: &std::path::Path) {
-    const SIZE: u32 = 256;
-    let img = image::RgbaImage::from_raw(SIZE, SIZE, rgba(SIZE)).expect("icon buffer size");
-    let mut png = Vec::new();
-    img.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).expect("encode png");
-    let mut ico = vec![0, 0, 1, 0, 1, 0]; // reserved, type 1 = icon, 1 image
-    ico.extend_from_slice(&[0, 0, 0, 0, 1, 0, 32, 0]); // 256x256 (0 = 256), no palette, 1 plane, 32 bpp
-    ico.extend_from_slice(&(png.len() as u32).to_le_bytes());
-    ico.extend_from_slice(&22u32.to_le_bytes()); // data offset = 6 + 16
-    ico.extend_from_slice(&png);
+    const SIZES: [u32; 8] = [16, 20, 24, 32, 40, 48, 64, 256];
+    let png = |size: u32| {
+        let img = image::RgbaImage::from_raw(size, size, rgba(size)).expect("icon buffer size");
+        let mut out = Vec::new();
+        img.write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png).expect("encode png");
+        out
+    };
+    let images: Vec<(u32, Vec<u8>)> = SIZES.iter().map(|&s| (s, png(s))).collect();
+    let mut ico = vec![0, 0, 1, 0];
+    ico.extend_from_slice(&(images.len() as u16).to_le_bytes());
+    let mut offset = 6 + 16 * images.len() as u32;
+    for (size, data) in &images {
+        let dim = if *size >= 256 { 0 } else { *size as u8 }; // 0 means 256
+        ico.extend_from_slice(&[dim, dim, 0, 0, 1, 0, 32, 0]); // no palette, 1 plane, 32 bpp
+        ico.extend_from_slice(&(data.len() as u32).to_le_bytes());
+        ico.extend_from_slice(&offset.to_le_bytes());
+        offset += data.len() as u32;
+    }
+    for (_, data) in &images {
+        ico.extend_from_slice(data);
+    }
     std::fs::create_dir_all(dir).expect("create icon dir");
-    std::fs::write(dir.join("icon.png"), &png).expect("write icon.png");
+    std::fs::write(dir.join("icon.png"), &images.last().expect("256 px image").1).expect("write icon.png");
     std::fs::write(dir.join("icon.ico"), &ico).expect("write icon.ico");
-    println!("wrote {}/icon.png and icon.ico", dir.display());
+    println!("wrote {}/icon.png and icon.ico ({} sizes)", dir.display(), images.len());
 }
 
 #[cfg(test)]

@@ -1,0 +1,3 @@
+// Windows resources compiled into cumulus.exe (see build.rs).
+// The first icon is what Explorer, shortcuts and the taskbar show.
+1 ICON "icon.ico"

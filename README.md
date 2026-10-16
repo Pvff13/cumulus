@@ -133,7 +133,8 @@ code-signed, so Windows SmartScreen will warn the first time ("More info" →
 already have it via Edge).
 
 The icon in `assets/` is drawn in code; regenerate it with
-`cargo run -- --dev-icon assets`.
+`cargo run -- --dev-icon assets`. `build.rs` embeds `assets/icon.ico` into the
+exe (that's what Explorer, shortcuts and the taskbar show).
 
 Tests: `cargo test` (offline) and `cargo test -- --ignored` (hits SoundCloud).
 
@@ -151,6 +152,7 @@ Tests: `cargo test` (offline) and `cargo test -- --ignored` (hits SoundCloud).
 | `cpal` | Audio output via WASAPI, opened at the track's sample rate so Windows resamples (no resampler dependency). |
 | `souvlaki` | Windows media overlay / media keys (also MPRIS and macOS Now Playing). |
 | `tray-icon` | Tray icon and its menu. |
+| `embed-resource` (build only) | Compiles the icon into the .exe with the Windows SDK's `rc.exe`. Not part of the app at runtime. |
 | `raw-window-handle` | Hands the window handle to the media controls. |
 | `memmap2` | Memory-maps Windows' own fonts (Segoe UI Symbol, CJK, emoji...) as fallbacks for the decorative Unicode common in track names, without loading them into RAM. |
 
