@@ -202,6 +202,15 @@ impl PlaylistView {
         Self { playlist, entries: Vec::new(), loading: true, error: None, requested: HashSet::new(), retry_at: None }
     }
 
+    /// A mix: the header and track ids are already known, tracks are
+    /// fetched as they scroll into view.
+    pub fn from_ids(playlist: Arc<Playlist>, ids: Vec<u64>) -> Self {
+        let mut view = Self::new(playlist);
+        view.loading = false;
+        view.entries = ids.into_iter().map(Entry::Pending).collect();
+        view
+    }
+
     pub fn apply_playlist(&mut self, result: Result<Playlist, ApiError>) {
         self.loading = false;
         match result {

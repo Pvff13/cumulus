@@ -21,12 +21,13 @@ impl App {
                 let a = a.clone();
                 self.artist_ui(ui, &a);
             }
-            None => match self.nav.feed() {
-                Some(kind) => {
+            None => match (self.nav, self.nav.feed()) {
+                (_, Some(kind)) => {
                     let nav = self.nav;
                     self.feed_ui(ui, kind, Some(nav.label()), nav.empty_text());
                 }
-                None => self.search_ui(ui),
+                (Nav::Home, None) => self.home_ui(ui),
+                (_, None) => self.search_ui(ui),
             },
         }
     }
@@ -154,7 +155,9 @@ impl App {
             let _ = rows::artwork(ui, &art, p.artwork(), 120.0, "t300x300");
             ui.add_space(8.0);
             ui.vertical(|ui| {
-                ui.label(RichText::new(if p.is_album { "Album" } else { "Playlist" }).small().color(MUTED));
+                // Mixes get a synthetic id with the top bit set (see SystemPlaylist::local_id).
+                let kind = if p.id >= 1 << 63 { "Mix" } else if p.is_album { "Album" } else { "Playlist" };
+                ui.label(RichText::new(kind).small().color(MUTED));
                 ui.add(egui::Label::new(RichText::new(&p.title).heading()).truncate());
                 rows::link_label(ui, &p.user.username, &p.user.permalink_url);
                 ui.label(RichText::new(format!("{} tracks", p.track_count)).color(MUTED));

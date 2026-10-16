@@ -50,6 +50,11 @@ impl Api {
         format!("/search/{what}?q={}&limit={PAGE}", encode(query))
     }
 
+    /// The personalised home page: mixes, stations, recommendations.
+    pub fn home_url() -> String {
+        "/mixed-selections?limit=20".to_string()
+    }
+
     /// An artist's own uploads.
     pub fn user_tracks_url(user_id: u64) -> String {
         format!("/users/{user_id}/tracks?limit={PAGE}")

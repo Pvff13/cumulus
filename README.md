@@ -36,6 +36,12 @@ and every track credits its artist and links back to SoundCloud.
 
 ## Library browsing
 
+- **Home** (the start view) mirrors soundcloud.com's home page: your
+  personal mixes ("Mixed for …", Your Mix 1-n) and *Made for you* (Daily
+  Drops, Weekly Wave) first, then More of what you like, Recently Played,
+  stations, trending and recommended albums. Hover a mix and click ▶ to play
+  it, or click a tile to open it. Rows scroll sideways (Shift + wheel or the
+  scrollbar).
 - **Stream, Likes, Playlists, Reposts** in the sidebar. Lists are virtualised:
   only the rows on screen are laid out, and the next page of 50 loads when you
   scroll near the end. ↻ refreshes a list.
@@ -100,8 +106,9 @@ All under `%LOCALAPPDATA%\Cumulus\cache`, safe to delete at any time:
 
 - `art/`: artwork thumbnails, capped at 100 MB by default (`art_cache_mb` in
   `config.json`); least recently used files are removed first. Only about
-  16 MB of decoded artwork is kept in memory.
-- `meta/`: the first page of each list as raw JSON (capped at 20 MB), so the
+  16 MB of decoded artwork is kept in memory, and big images (500 px mix
+  tiles) are shrunk to 300 px when loaded.
+- `meta/`: the first page of each list and the home page as raw JSON (capped at 20 MB), so the
   app shows your library instantly on start-up and while offline.
 - Audio is never cached or saved.
 

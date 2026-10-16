@@ -22,6 +22,8 @@ const MAX_QUEUE: usize = 96;
 /// In-memory texture budget, in pixels (about 16 MB of RGBA).
 const MEM_PIXELS: usize = 4_000_000;
 const MAX_DOWNLOAD: u64 = 4 * 1024 * 1024;
+/// Images are stored in memory at most this many pixels wide/high.
+const MAX_DIM: u32 = 300;
 /// A failed image (offline, 404) is retried after this long.
 const RETRY_AFTER: Duration = Duration::from_secs(60);
 
@@ -177,6 +179,9 @@ fn load(inner: &Inner, url: &str) -> Option<ColorImage> {
         }
     };
     let rgba = match image::load_from_memory(&bytes) {
+        // Big artwork (500 px mix tiles) is shrunk on load; nothing is shown
+        // larger than this, and it keeps texture memory down.
+        Ok(img) if img.width().max(img.height()) > MAX_DIM => img.thumbnail(MAX_DIM, MAX_DIM).to_rgba8(),
         Ok(img) => img.to_rgba8(),
         Err(_) => {
             // Corrupt or truncated file: drop it so it is fetched again next time.

@@ -174,6 +174,99 @@ pub struct Page<T> {
     pub next_href: Option<String>,
 }
 
+/// One row of the SoundCloud home page ("Mixed for you", "Made for you", ...).
+#[derive(Debug, Clone, Deserialize)]
+pub struct Selection {
+    #[serde(default)]
+    pub title: String,
+    /// e.g. `soundcloud:selections:your-moods`
+    #[serde(default)]
+    pub urn: String,
+    pub items: Page<HomeItem>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(tag = "kind")]
+pub enum HomeItem {
+    /// A generated mix / station ("Your Mix 1", "Daily Drops", ...).
+    #[serde(rename = "system-playlist")]
+    Mix(SystemPlaylist),
+    #[serde(rename = "playlist")]
+    Playlist(Playlist),
+    #[serde(other)]
+    Other,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct SystemPlaylist {
+    pub urn: String,
+    #[serde(default)]
+    pub title: String,
+    /// Usually the artists in the mix.
+    #[serde(default)]
+    pub short_description: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub artwork_url: Option<String>,
+    #[serde(default)]
+    pub calculated_artwork_url: Option<String>,
+    #[serde(default)]
+    pub permalink_url: String,
+    /// Track id stubs; fetched in full as they come into view.
+    #[serde(default)]
+    pub tracks: Vec<PlaylistEntry>,
+}
+
+impl SystemPlaylist {
+    pub fn artwork(&self) -> Option<&str> {
+        self.calculated_artwork_url.as_deref().or(self.artwork_url.as_deref())
+    }
+
+    pub fn subtitle(&self) -> &str {
+        self.short_description.as_deref().or(self.description.as_deref()).unwrap_or_default()
+    }
+
+    pub fn track_ids(&self) -> Vec<u64> {
+        self.tracks
+            .iter()
+            .map(|e| match e {
+                PlaylistEntry::Full(t) => t.id,
+                PlaylistEntry::Stub { id } => *id,
+            })
+            .collect()
+    }
+
+    /// Mixes have no numeric id; derive a stable one from the URN so a mix
+    /// can be shown with the playlist view.
+    pub fn local_id(&self) -> u64 {
+        let mut h: u64 = 0xcbf29ce484222325;
+        for b in self.urn.bytes() {
+            h = (h ^ u64::from(b)).wrapping_mul(0x100000001b3);
+        }
+        h | 1 << 63 // never collides with real (small) playlist ids
+    }
+
+    /// As a playlist header (title, artwork, link back to SoundCloud).
+    pub fn as_playlist(&self) -> Playlist {
+        Playlist {
+            id: self.local_id(),
+            title: self.title.clone(),
+            permalink_url: self.permalink_url.clone(),
+            artwork_url: self.artwork().map(str::to_string),
+            user: MiniUser {
+                id: 0,
+                username: "SoundCloud".into(),
+                permalink_url: "https://soundcloud.com/discover".into(),
+                avatar_url: None,
+            },
+            track_count: self.tracks.len() as u32,
+            is_album: false,
+            tracks: Vec::new(),
+        }
+    }
+}
+
 /// Rewrites a SoundCloud artwork/avatar URL to a given size variant,
 /// e.g. `t67x67` or `t300x300` (the API returns the 100 px `large` one).
 pub fn sized_art(url: &str, size: &str) -> String {
@@ -195,6 +288,22 @@ mod tests {
         let p: Playlist = serde_json::from_str(json).unwrap();
         assert!(matches!(p.tracks[0], PlaylistEntry::Full(_)));
         assert!(matches!(p.tracks[1], PlaylistEntry::Stub { id: 11 }));
+    }
+
+    #[test]
+    fn home_items() {
+        let json = r#"{"collection":[{"title":"Mixed for you","items":{"collection":[
+            {"kind":"system-playlist","urn":"soundcloud:system-playlists:your-moods:1:1","title":"Your Mix 1",
+             "short_description":"a, b","tracks":[{"id":5,"kind":"track","policy":"ALLOW"}]},
+            {"kind":"playlist","id":7,"title":"p","user":{"username":"u"},"track_count":2},
+            {"kind":"something-new"}]}}]}"#;
+        let page: Page<Selection> = serde_json::from_str(json).unwrap();
+        let items = &page.collection[0].items.collection;
+        let HomeItem::Mix(m) = &items[0] else { panic!("mix") };
+        assert_eq!((m.track_ids(), m.subtitle()), (vec![5], "a, b"));
+        assert!(m.local_id() > 1 << 62);
+        assert!(matches!(items[1], HomeItem::Playlist(_)));
+        assert!(matches!(items[2], HomeItem::Other));
     }
 
     #[test]

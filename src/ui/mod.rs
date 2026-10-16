@@ -1,5 +1,6 @@
 mod desktop;
 mod fonts;
+mod home;
 mod icon;
 mod library;
 mod player_bar;
@@ -17,7 +18,7 @@ use std::time::{Duration, Instant};
 
 use eframe::egui::{self, Align, Layout, RichText};
 
-use crate::api::models::{Playlist, Track, User};
+use crate::api::models::{Playlist, Selection, Track, User};
 use crate::api::{Api, ApiError, SearchKind};
 use crate::auth;
 use crate::cache::art::ArtCache;
@@ -43,6 +44,7 @@ enum Msg {
     QueueTracks(Vec<Arc<Track>>),
     Liked(Result<HashSet<u64>, ApiError>),
     Desktop(DesktopEvent),
+    Home { cached: bool, result: Result<Vec<Selection>, ApiError> },
 }
 
 enum Screen {
@@ -60,6 +62,7 @@ enum Screen {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Nav {
+    Home,
     Stream,
     Likes,
     Playlists,
@@ -68,10 +71,11 @@ enum Nav {
 }
 
 impl Nav {
-    const ALL: [Nav; 5] = [Nav::Stream, Nav::Likes, Nav::Playlists, Nav::Reposts, Nav::Search];
+    const ALL: [Nav; 6] = [Nav::Home, Nav::Stream, Nav::Likes, Nav::Playlists, Nav::Reposts, Nav::Search];
 
     fn label(self) -> &'static str {
         match self {
+            Nav::Home => "Home",
             Nav::Stream => "Stream",
             Nav::Likes => "Likes",
             Nav::Playlists => "Playlists",
@@ -86,7 +90,7 @@ impl Nav {
             Nav::Likes => Some(FeedKind::Likes),
             Nav::Playlists => Some(FeedKind::Library),
             Nav::Reposts => Some(FeedKind::Reposts),
-            Nav::Search => None,
+            Nav::Home | Nav::Search => None,
         }
     }
 
@@ -96,7 +100,7 @@ impl Nav {
             Nav::Likes => "You haven't liked any tracks yet.",
             Nav::Playlists => "No playlists yet.",
             Nav::Reposts => "You haven't reposted anything yet.",
-            Nav::Search => "No results.",
+            Nav::Home | Nav::Search => "No results.",
         }
     }
 }
@@ -132,6 +136,7 @@ pub struct App {
     /// Signed-in user id (0 when signed out).
     me: u64,
     nav: Nav,
+    home: home::HomeState,
     feeds: HashMap<FeedKind, Feed>,
     pages: Vec<Page>,
     paste_open: bool,
@@ -207,7 +212,8 @@ impl App {
             rx,
             screen: Screen::Starting,
             me: 0,
-            nav: Nav::Likes,
+            nav: Nav::Home,
+            home: home::HomeState::default(),
             feeds: HashMap::new(),
             pages: Vec::new(),
             paste_open: false,
@@ -248,7 +254,8 @@ impl App {
             Ok("playlists") => Nav::Playlists,
             Ok("reposts") => Nav::Reposts,
             Ok("search") => Nav::Search,
-            _ => Nav::Likes,
+            Ok("likes") => Nav::Likes,
+            _ => Nav::Home,
         };
         if let Ok(q) = std::env::var("CUMULUS_DEV_SEARCH") {
             self.search_text = q.clone();
@@ -323,6 +330,7 @@ impl App {
         auth::sign_out();
         self.api.set_token(None);
         self.feeds.clear();
+        self.home = home::HomeState::default();
         self.pages.clear();
         self.liked.clear();
         self.recheck_on_focus = None;
@@ -451,6 +459,8 @@ impl App {
                 }
             }
             Msg::Desktop(e) => self.desktop_event(e),
+            Msg::Home { result: Err(ApiError::Unauthorized), .. } => self.sign_out(Some(ApiError::Unauthorized.to_string())),
+            Msg::Home { cached, result } => self.home_loaded(cached, result),
             Msg::Liked(Ok(ids)) => self.liked = ids,
             // Hearts just stay empty; everything else still works.
             Msg::Liked(Err(_)) => {}
