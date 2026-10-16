@@ -1,0 +1,39 @@
+use serde::{Deserialize, Serialize};
+
+use crate::paths;
+
+/// Small non-secret settings persisted as JSON. The OAuth token is never
+/// stored here; it lives in the OS credential store (see `auth`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Config {
+    /// Last known public web client_id, re-discovered when it stops working.
+    pub client_id: Option<String>,
+    /// Disk limit for cached artwork, in MB.
+    pub art_cache_mb: u64,
+    /// 0.0..=1.0
+    pub volume: f32,
+    /// Closing the window hides it to the tray and keeps playing.
+    pub close_to_tray: bool,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self { client_id: None, art_cache_mb: 100, volume: 0.8, close_to_tray: true }
+    }
+}
+
+impl Config {
+    pub fn load() -> Self {
+        std::fs::read_to_string(paths::config_file())
+            .ok()
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_default()
+    }
+
+    pub fn save(&self) {
+        if let Ok(s) = serde_json::to_string_pretty(self) {
+            let _ = std::fs::write(paths::config_file(), s);
+        }
+    }
+}

@@ -1,0 +1,61 @@
+[package]
+name = "cumulus"
+version = "0.1.0"
+edition = "2024"
+description = "Lightweight native desktop player for your SoundCloud library (unofficial)"
+publish = false
+
+[dependencies]
+# GUI: immediate-mode, repaints only on input / explicit request, OpenGL backend.
+eframe = { version = "0.37.0", default-features = false, features = ["glow", "default_fonts", "links"] }
+# Login window only: system WebView2 (already part of Windows 11), runs in a
+# separate short-lived process so its memory is released after sign-in.
+wry = "0.57.0"
+# wry needs a window; this is the same winit version eframe uses internally.
+winit = "0.30"
+# Windows Credential Manager / macOS Keychain / Secret Service.
+keyring = "4.2.0"
+# Blocking HTTP on worker threads; native-tls = Windows SChannel, no bundled TLS stack.
+ureq = { version = "3.4.2", default-features = false, features = ["native-tls", "json", "gzip"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+# %LOCALAPPDATA% and friends.
+dirs = "7.0.0"
+image = { version = "0.25.10", default-features = false, features = ["jpeg", "png"] }
+memmap2 = "0.9.11"
+symphonia-core = "0.6"
+symphonia-codec-aac = "0.6"
+symphonia-bundle-mp3 = "0.6"
+cpal = "0.18"
+rtrb = "0.4"
+souvlaki = "0.8.3"
+tray-icon = "0.26.1"
+raw-window-handle = "0.6"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+eframe = { version = "0.37.0", default-features = false, features = ["glow", "default_fonts", "links", "x11", "wayland"] }
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+strip = true
+
+# Optimise dependencies (image decoding etc.) even in debug builds.
+[profile.dev.package."*"]
+opt-level = 2
+
+# Windows installer: `cargo packager --release` (see README).
+[package.metadata.packager]
+product-name = "Cumulus"
+identifier = "app.cumulus.player"
+description = "Lightweight native desktop player for your SoundCloud library (unofficial)"
+before-packaging-command = "cargo build --release"
+out-dir = "dist"
+formats = ["nsis"]
+icons = ["assets/icon.png", "assets/icon.ico"]
+binaries = [{ path = "cumulus", main = true }]
+
+[package.metadata.packager.nsis]
+installer-icon = "assets/icon.ico"
+installer-mode = "currentUser"
