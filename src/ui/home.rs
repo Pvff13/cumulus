@@ -7,10 +7,10 @@ use std::time::Instant;
 use eframe::egui::{self, Align, Align2, Color32, CursorIcon, FontId, Layout, RichText, vec2};
 
 use super::library::PlaylistView;
-use super::rows;
+use super::rows::{self, TrackAction};
 use super::theme::{HOVER, MUTED};
 use super::{App, Msg, Page, status_line};
-use crate::api::models::{HomeItem, Page as ApiPage, Playlist, Selection, SystemPlaylist};
+use crate::api::models::{HomeItem, Page as ApiPage, Playlist, Selection, SystemPlaylist, Track, TrackLike};
 use crate::api::{Api, ApiError, client};
 use crate::cache::meta;
 use crate::player::QueueItem;
@@ -20,6 +20,8 @@ const TILE: f32 = 150.0;
 #[derive(Default)]
 pub struct HomeState {
     pub sections: Vec<Selection>,
+    /// What you actually played recently (shown as "Recently Played").
+    pub history: Vec<Arc<Track>>,
     pub loading: bool,
     pub error: Option<String>,
     pub started: bool,
@@ -30,16 +32,41 @@ enum HomeAction {
     OpenMix(SystemPlaylist),
     PlayMix(SystemPlaylist),
     OpenPlaylist(Arc<Playlist>),
+    /// Play the recently-played list from this position.
+    PlayHistory(usize),
+    Track(TrackAction, Arc<Track>),
 }
 
 /// Your personal mixes and "Made for you" (Daily Drops) first; everything
 /// else keeps SoundCloud's order.
+/// Recently played tracks, newest first, each listed once.
+fn fetch_history(api: &Api) -> Result<Vec<Arc<Track>>, ApiError> {
+    let page: ApiPage<TrackLike> = api.get(&Api::play_history_url())?;
+    let mut seen = std::collections::HashSet::new();
+    Ok(page
+        .collection
+        .into_iter()
+        .filter_map(|h| h.track)
+        .filter(|t| seen.insert(t.id))
+        .map(Arc::new)
+        .collect())
+}
+
 fn parse(body: &str) -> Result<Vec<Selection>, ApiError> {
     let page: ApiPage<Selection> = client::parse(body)?;
     let mut sections = page.collection;
+    // SoundCloud sometimes repeats the same tile many times in a row.
+    for s in &mut sections {
+        let mut seen = std::collections::HashSet::new();
+        s.items.collection.retain(|it| match it {
+            HomeItem::Mix(m) => seen.insert(m.urn.clone()),
+            HomeItem::Playlist(p) => seen.insert(p.id.to_string()),
+            HomeItem::Other => false,
+        });
+    }
     let rank = |s: &Selection| match () {
-        _ if s.urn.ends_with(":your-moods") => 0,
-        _ if s.urn.ends_with(":made-for-you") => 1,
+        _ if s.urn.contains(":your-moods") => 0,
+        _ if s.urn.contains(":made-for-you") => 1,
         _ => 2,
     };
     sections.sort_by_key(rank);
@@ -64,6 +91,7 @@ impl App {
                 Ok(sections)
             });
             send(Msg::Home { cached: false, result });
+            send(Msg::History(fetch_history(api)));
         });
     }
 
@@ -106,8 +134,26 @@ impl App {
         ui.add_space(6.0);
 
         let mut action = None;
+        let liked = &self.liked;
         egui::ScrollArea::vertical().id_salt("home").auto_shrink(false).show(ui, |ui| {
             for (i, section) in self.home.sections.iter().enumerate() {
+                // "Recently Played": the songs themselves, each with its own cover.
+                if section.urn.contains(":recently-played") && !self.home.history.is_empty() {
+                    ui.label(RichText::new(&section.title).size(18.0).strong());
+                    ui.add_space(4.0);
+                    egui::ScrollArea::horizontal().id_salt(("home-row", i)).show(ui, |ui| {
+                        ui.horizontal_top(|ui| {
+                            ui.spacing_mut().item_spacing.x = 14.0;
+                            for (n, t) in self.home.history.iter().enumerate() {
+                                if let Some(a) = track_tile(ui, &self.art, liked, t, n) {
+                                    action = Some(a);
+                                }
+                            }
+                        });
+                    });
+                    ui.add_space(16.0);
+                    continue;
+                }
                 let items: Vec<&HomeItem> =
                     section.items.collection.iter().filter(|it| !matches!(it, HomeItem::Other)).collect();
                 if items.is_empty() {
@@ -152,12 +198,53 @@ impl App {
                 self.status = Some(super::Status { text: format!("Playing {}", m.title), at: Instant::now(), error: false });
             }
             Some(HomeAction::OpenPlaylist(p)) => self.open_playlist(p),
+            Some(HomeAction::PlayHistory(n)) => {
+                let items = self.home.history.iter().map(|t| QueueItem { id: t.id, track: Some(t.clone()) }).collect();
+                self.play_list(items, n);
+            }
+            Some(HomeAction::Track(a, t)) => self.track_action(a, t),
             None => {}
         }
         if refresh {
             self.load_home();
         }
     }
+}
+
+/// A song tile (Recently Played): its own artwork; click plays it,
+/// right-click gives the usual track menu.
+fn track_tile(
+    ui: &mut egui::Ui,
+    art: &crate::cache::art::ArtCache,
+    liked: &std::collections::HashSet<u64>,
+    track: &Arc<Track>,
+    index: usize,
+) -> Option<HomeAction> {
+    let mut action = None;
+    ui.allocate_ui_with_layout(vec2(TILE, TILE + 46.0), Layout::top_down(Align::Min), |ui| {
+        ui.set_width(TILE);
+        let img = rows::artwork(ui, art, track.artwork(), TILE, "t300x300")
+            .on_hover_cursor(CursorIcon::PointingHand)
+            .on_hover_text("Play");
+        if ui.rect_contains_pointer(img.rect) {
+            let center = img.rect.right_bottom() - vec2(24.0, 24.0);
+            ui.painter().rect_filled(img.rect, 4.0, HOVER.gamma_multiply(0.35));
+            ui.painter().circle_filled(center, 18.0, Color32::from_black_alpha(200));
+            ui.painter().text(center, Align2::CENTER_CENTER, "▶", FontId::proportional(16.0), Color32::WHITE);
+        }
+        if img.clicked() {
+            action = Some(HomeAction::PlayHistory(index));
+        }
+        img.context_menu(|ui| {
+            if let Some(a) = rows::track_menu(ui, track, liked.contains(&track.id)) {
+                action = Some(if a == TrackAction::Play { HomeAction::PlayHistory(index) } else { HomeAction::Track(a, track.clone()) });
+            }
+        });
+        ui.add_space(4.0);
+        ui.add(egui::Label::new(RichText::new(&track.title).strong()).truncate().selectable(false));
+        ui.add(egui::Label::new(RichText::new(&track.user.username).small().color(MUTED)).truncate().selectable(false));
+    });
+    action
 }
 
 /// One tile: artwork, title, subtitle. Mixes get a ▶ while hovered.

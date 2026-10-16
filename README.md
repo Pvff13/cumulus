@@ -39,7 +39,9 @@ and every track credits its artist and links back to SoundCloud.
 - **Home** (the start view) mirrors soundcloud.com's home page: your
   personal mixes ("Mixed for …", Your Mix 1-n) and *Made for you* (Daily
   Drops, Weekly Wave) first, then More of what you like, Recently Played,
-  stations, trending and recommended albums. Hover a mix and click ▶ to play
+  stations, trending and recommended albums. **Recently Played** shows the
+  songs you actually played (each with its own cover; click to play, right-
+  click for the track menu) instead of SoundCloud's repeated station tiles. Hover a mix and click ▶ to play
   it, or click a tile to open it. Rows scroll sideways (Shift + wheel or the
   scrollbar).
 - **Stream, Likes, Playlists, Reposts** in the sidebar. Lists are virtualised:
@@ -122,6 +124,19 @@ cargo build --release
 ```
 
 The binary is `target/release/cumulus.exe` (about 9.6 MB).
+
+### Updates
+
+An installed Cumulus updates itself from this project's build folder: after
+`cargo build --release`, the running app notices the newer
+`target/release/cumulus.exe` (at start-up and every 10 minutes) and shows
+**Restart to update** in the sidebar. Clicking it swaps in the new exe
+(Windows allows renaming a running .exe, so the old one is moved aside and
+deleted on the next start) and restarts; settings and sign-in are kept. It
+never restarts on its own. Each build carries a build number (`cumulus.exe
+--build-id`) so it only ever moves forward. To update from a different
+location, set `update_source` in `config.json` to the path of a
+`cumulus.exe`. Debug builds don't update.
 
 ### Windows installer
 

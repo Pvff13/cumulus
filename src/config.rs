@@ -15,11 +15,14 @@ pub struct Config {
     pub volume: f32,
     /// Closing the window hides it to the tray and keeps playing.
     pub close_to_tray: bool,
+    /// Path of the build to update from; defaults to this project's
+    /// `target/release/cumulus.exe` (set at compile time).
+    pub update_source: Option<String>,
 }
 
 impl Default for Config {
     fn default() -> Self {
-        Self { client_id: None, art_cache_mb: 100, volume: 0.8, close_to_tray: true }
+        Self { client_id: None, art_cache_mb: 100, volume: 0.8, close_to_tray: true, update_source: None }
     }
 }
 

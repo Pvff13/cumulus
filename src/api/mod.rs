@@ -55,6 +55,11 @@ impl Api {
         "/mixed-selections?limit=20".to_string()
     }
 
+    /// Tracks the user played recently, newest first.
+    pub fn play_history_url() -> String {
+        "/me/play-history/tracks?limit=50".to_string()
+    }
+
     /// An artist's own uploads.
     pub fn user_tracks_url(user_id: u64) -> String {
         format!("/users/{user_id}/tracks?limit={PAGE}")

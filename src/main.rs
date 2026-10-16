@@ -8,8 +8,14 @@ mod config;
 mod paths;
 mod player;
 mod ui;
+mod update;
 
 fn main() {
+    // Asked by an older copy deciding whether to update (see update.rs).
+    if std::env::args().any(|a| a == update::BUILD_ID_ARG) {
+        println!("{}", update::build_id());
+        return;
+    }
     // The sign-in window runs as a separate process (see auth::login) so the
     // WebView2 engine is fully torn down once the token has been captured.
     if std::env::args().any(|a| a == auth::login::LOGIN_ARG) {
@@ -25,6 +31,7 @@ fn main() {
     }
 
     set_app_id();
+    update::cleanup();
     let options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
             .with_title("Cumulus")

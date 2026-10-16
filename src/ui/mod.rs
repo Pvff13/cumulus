@@ -45,6 +45,9 @@ enum Msg {
     Liked(Result<HashSet<u64>, ApiError>),
     Desktop(DesktopEvent),
     Home { cached: bool, result: Result<Vec<Selection>, ApiError> },
+    History(Result<Vec<Arc<Track>>, ApiError>),
+    /// A newer build is ready to install (path of the new exe).
+    UpdateReady(std::path::PathBuf),
 }
 
 enum Screen {
@@ -175,7 +178,14 @@ pub struct App {
     hidden: bool,
     /// Quit was chosen: let the next close request through.
     quitting: bool,
+
+    update_checker: Arc<std::sync::Mutex<crate::update::Checker>>,
+    last_update_check: Option<Instant>,
+    update_ready: Option<std::path::PathBuf>,
 }
+
+/// How often to look for a newer build.
+const UPDATE_CHECK_EVERY: Duration = Duration::from_secs(600);
 
 /// Give up auto-skipping after this many tracks fail in a row.
 const MAX_FAILURES: u32 = 5;
@@ -239,6 +249,9 @@ impl App {
             close_to_tray: config.close_to_tray,
             hidden: false,
             quitting: false,
+            update_checker: Arc::default(),
+            last_update_check: None,
+            update_ready: None,
         };
         #[cfg(debug_assertions)]
         app.apply_dev_env();
@@ -459,8 +472,15 @@ impl App {
                 }
             }
             Msg::Desktop(e) => self.desktop_event(e),
+            Msg::UpdateReady(path) => self.update_ready = Some(path),
             Msg::Home { result: Err(ApiError::Unauthorized), .. } => self.sign_out(Some(ApiError::Unauthorized.to_string())),
             Msg::Home { cached, result } => self.home_loaded(cached, result),
+            Msg::History(Ok(tracks)) => self.home.history = tracks,
+            // Recently Played then falls back to SoundCloud's own row.
+            Msg::History(Err(_e)) => {
+                #[cfg(debug_assertions)]
+                eprintln!("[debug] play history: {_e}");
+            }
             Msg::Liked(Ok(ids)) => self.liked = ids,
             // Hearts just stay empty; everything else still works.
             Msg::Liked(Err(_)) => {}
@@ -503,6 +523,34 @@ impl App {
             DesktopEvent::Quit => {
                 self.quitting = true;
                 self.ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            }
+        }
+    }
+
+    /// Looks for a newer build in the background now and then.
+    fn check_for_update(&mut self) {
+        if self.update_ready.is_some() || self.last_update_check.is_some_and(|t| t.elapsed() < UPDATE_CHECK_EVERY) {
+            return;
+        }
+        self.last_update_check = Some(Instant::now());
+        let checker = self.update_checker.clone();
+        self.spawn(move |_, send| {
+            if let Some(path) = checker.lock().unwrap().newer_build() {
+                send(Msg::UpdateReady(path));
+            }
+        });
+    }
+
+    fn install_update(&mut self) {
+        let Some(path) = self.update_ready.clone() else { return };
+        match crate::update::apply(&path) {
+            Ok(()) => {
+                self.quitting = true;
+                self.ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            }
+            Err(e) => {
+                self.update_ready = None;
+                self.error(format!("Update failed: {e}"));
             }
         }
     }
@@ -657,6 +705,17 @@ impl App {
                             .small()
                             .color(MUTED),
                     );
+                    if self.update_ready.is_some() {
+                        ui.add_space(4.0);
+                        let button = egui::Button::new(RichText::new("⟳  Restart to update").strong()).fill(ACCENT);
+                        if ui
+                            .add_sized([176.0, 28.0], button)
+                            .on_hover_text("A newer build of Cumulus is ready. Restarts in a second; your settings and sign-in are kept.")
+                            .clicked()
+                        {
+                            self.install_update();
+                        }
+                    }
                     ui.add_space(4.0);
                     if self.desktop.has_tray()
                         && ui
@@ -717,6 +776,7 @@ impl eframe::App for App {
             self.handle(msg);
         }
         self.sync_playback();
+        self.check_for_update();
         let current = self.queue.current().and_then(|i| i.track.clone());
         let now = self.player.now();
         let playing = !self.player.is_paused() && now.is_some();

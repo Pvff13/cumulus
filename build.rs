@@ -1,3 +1,5 @@
+use std::time::{SystemTime, UNIX_EPOCH};
+
 fn main() {
     // Embed the app icon in the .exe so Explorer, Start-menu shortcuts and the
     // taskbar show it (a window icon set at runtime isn't enough for those).
@@ -8,4 +10,16 @@ fn main() {
             .manifest_optional()
             .expect("compile Windows resources");
     }
+
+    // Build number for self-updates: when the code changes, this script runs
+    // again and stamps a newer number (seconds since 1970).
+    println!("cargo:rerun-if-changed=src");
+    println!("cargo:rerun-if-changed=Cargo.toml");
+    let stamp = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs());
+    println!("cargo:rustc-env=CUMULUS_BUILD_ID={stamp}");
+
+    // Where new builds of this project appear; installed copies update from here.
+    let manifest = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_default();
+    let source = std::path::Path::new(&manifest).join("target").join("release").join("cumulus.exe");
+    println!("cargo:rustc-env=CUMULUS_UPDATE_SOURCE={}", source.display());
 }
