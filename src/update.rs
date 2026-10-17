@@ -87,9 +87,17 @@ pub struct Checker {
     rejected: HashSet<String>,
 }
 
+/// Result of a check the user asked for.
+pub enum Outcome {
+    Ready(Ready),
+    UpToDate,
+    /// Couldn't check, or the new release failed verification.
+    Problem(String),
+}
+
 impl Checker {
-    /// A newer version, if there is one: the local build folder first, then
-    /// GitHub (at most every few hours).
+    /// Background check: a newer version, if there is one. The local build
+    /// folder first, then GitHub (at most every few hours).
     pub fn check(&mut self, agent: &Agent) -> Option<Ready> {
         if let Some(exe) = self.newer_build() {
             return Some(Ready { exe, version: None });
@@ -97,13 +105,34 @@ impl Checker {
         if cfg!(debug_assertions) || self.last_remote.is_some_and(|t| t.elapsed() < REMOTE_EVERY) {
             return None;
         }
+        match self.remote(agent) {
+            Outcome::Ready(r) => Some(r),
+            Outcome::UpToDate | Outcome::Problem(_) => None,
+        }
+    }
+
+    /// "Check for updates" button: checks everything right now and says what it found.
+    pub fn check_now(&mut self, agent: &Agent) -> Outcome {
+        self.seen = None;
+        if let Some(exe) = self.newer_build() {
+            return Outcome::Ready(Ready { exe, version: None });
+        }
+        if cfg!(debug_assertions) {
+            return Outcome::Problem("updates are off in debug builds".into());
+        }
+        self.remote(agent)
+    }
+
+    fn remote(&mut self, agent: &Agent) -> Outcome {
         self.last_remote = Some(Instant::now());
         match newer_release(agent, &self.rejected) {
-            Ok(r) => r,
-            Err((version, why)) => {
+            Ok(Some(r)) => Outcome::Ready(r),
+            Ok(None) => Outcome::UpToDate,
+            Err(Fail::Unreachable) => Outcome::Problem("couldn't reach GitHub; check your connection".into()),
+            Err(Fail::Rejected { version, why }) => {
                 eprintln!("cumulus update {version}: {why}");
-                self.rejected.insert(version);
-                None
+                self.rejected.insert(version.clone());
+                Outcome::Problem(format!("version {version} is out but couldn't be installed: {why}"))
             }
         }
     }
@@ -166,18 +195,27 @@ pub fn current_version() -> &'static str {
     env!("CARGO_PKG_VERSION")
 }
 
+enum Fail {
+    /// No connection, rate limited, unexpected answer: try again later.
+    Unreachable,
+    /// This release can't be used (missing files, bad signature): don't retry it.
+    Rejected { version: String, why: String },
+}
+
 /// Downloads the latest release if it's newer, and keeps it only if the
-/// signature verifies. Err carries the release version so it isn't retried.
-fn newer_release(agent: &Agent, rejected: &HashSet<String>) -> Result<Option<Ready>, (String, String)> {
+/// signature verifies.
+fn newer_release(agent: &Agent, rejected: &HashSet<String>) -> Result<Option<Ready>, Fail> {
     let Some(url) = latest_release_url() else { return Ok(None) };
-    // No connection, rate limited, no release yet: just try again later.
-    let Ok(body) = agent.get_bytes(&url, 1024 * 1024) else { return Ok(None) };
-    let Ok(release) = serde_json::from_slice::<Release>(&body) else { return Ok(None) };
+    let body = agent.get_bytes(&url, 1024 * 1024).map_err(|_| Fail::Unreachable)?;
+    let release = serde_json::from_slice::<Release>(&body).map_err(|_| Fail::Unreachable)?;
     let version = release.tag_name.trim_start_matches('v').to_string();
-    if parse_version(&version) <= parse_version(current_version()) || rejected.contains(&version) {
+    if parse_version(&version) <= parse_version(current_version()) {
         return Ok(None);
     }
-    let fail = |why: &str| (version.clone(), why.to_string());
+    let fail = |why: &str| Fail::Rejected { version: version.clone(), why: why.to_string() };
+    if rejected.contains(&version) {
+        return Err(fail("it failed verification earlier"));
+    }
     let asset = |name: &str| release.assets.iter().find(|a| a.name == name).map(|a| a.browser_download_url.clone());
     let exe_url = asset("cumulus.exe").ok_or_else(|| fail("release has no cumulus.exe"))?;
     let sig_url = asset("cumulus.exe.sig").ok_or_else(|| fail("release has no signature"))?;
@@ -216,6 +254,19 @@ mod tests {
         assert!(parse_version("0.2.0") > parse_version("0.1.0"));
         assert_eq!(parse_version("v1.2.3-beta"), (1, 2, 3));
         assert_eq!(latest_release_url().as_deref(), Some("https://api.github.com/repos/Pvff13/cumulus/releases/latest"));
+    }
+
+    /// Live: what "Check for updates" asks GitHub. This build's version
+    /// equals the latest release, so it must say "up to date" (not an error).
+    #[test]
+    #[ignore = "hits GitHub"]
+    fn check_reports_up_to_date_for_latest() {
+        match newer_release(&Agent::new(), &HashSet::new()) {
+            Ok(None) => {}
+            Ok(Some(r)) => panic!("unexpected newer release {:?}", r.version),
+            Err(Fail::Unreachable) => panic!("GitHub unreachable"),
+            Err(Fail::Rejected { version, why }) => panic!("{version} rejected: {why}"),
+        }
     }
 
     /// Live: the published latest release downloads and its signature

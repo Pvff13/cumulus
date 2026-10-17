@@ -50,6 +50,8 @@ enum Msg {
     Autoplay { after: u64, result: Result<Vec<Track>, ApiError> },
     /// A newer version is downloaded/verified and ready to install.
     UpdateReady(crate::update::Ready),
+    /// Result of pressing "Check for updates".
+    UpdateChecked(crate::update::Outcome),
 }
 
 enum Screen {
@@ -188,6 +190,8 @@ pub struct App {
     update_checker: Arc<std::sync::Mutex<crate::update::Checker>>,
     last_update_check: Option<Instant>,
     update_ready: Option<crate::update::Ready>,
+    /// "Check for updates" is running.
+    checking_update: bool,
 }
 
 /// How often to look for a newer build.
@@ -260,6 +264,7 @@ impl App {
             update_checker: Arc::default(),
             last_update_check: None,
             update_ready: None,
+            checking_update: false,
         };
         #[cfg(debug_assertions)]
         app.apply_dev_env();
@@ -481,6 +486,21 @@ impl App {
             }
             Msg::Desktop(e) => self.desktop_event(e),
             Msg::UpdateReady(ready) => self.update_ready = Some(ready),
+            Msg::UpdateChecked(outcome) => {
+                use crate::update::Outcome;
+                self.checking_update = false;
+                match outcome {
+                    Outcome::Ready(ready) => {
+                        let what = ready.version.as_deref().map_or("A newer build".to_string(), |v| format!("Version {v}"));
+                        self.info(format!("{what} is ready: click the update button below the sidebar menu."));
+                        self.update_ready = Some(ready);
+                    }
+                    Outcome::UpToDate => {
+                        self.info(format!("You're up to date (Cumulus {}).", crate::update::current_version()))
+                    }
+                    Outcome::Problem(why) => self.error(format!("Couldn't check for updates: {why}")),
+                }
+            }
             Msg::Home { result: Err(ApiError::Unauthorized), .. } => self.sign_out(Some(ApiError::Unauthorized.to_string())),
             Msg::Home { cached, result } => self.home_loaded(cached, result),
             Msg::History(Ok(tracks)) => self.home.history = tracks,
@@ -554,6 +574,17 @@ impl App {
                 send(Msg::UpdateReady(ready));
             }
         });
+    }
+
+    /// The "Check for updates" button: check right now, whatever the schedule.
+    fn check_for_update_now(&mut self) {
+        if self.checking_update {
+            return;
+        }
+        self.checking_update = true;
+        self.last_update_check = Some(Instant::now());
+        let checker = self.update_checker.clone();
+        self.spawn(move |api, send| send(Msg::UpdateChecked(checker.lock().unwrap().check_now(&api.agent()))));
     }
 
     fn install_update(&mut self) {
@@ -771,6 +802,18 @@ impl App {
                             .small()
                             .color(MUTED),
                     );
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 4.0;
+                        ui.label(RichText::new(format!("Cumulus {}", crate::update::current_version())).small().color(MUTED));
+                        if self.update_ready.is_none() {
+                            ui.label(RichText::new("·").small().color(MUTED));
+                            if self.checking_update {
+                                ui.label(RichText::new("Checking...").small().color(MUTED));
+                            } else if ui.link(RichText::new("Check for updates").small()).clicked() {
+                                self.check_for_update_now();
+                            }
+                        }
+                    });
                     if let Some(ready) = &self.update_ready {
                         ui.add_space(4.0);
                         let label = match &ready.version {

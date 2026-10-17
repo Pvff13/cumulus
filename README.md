@@ -29,7 +29,8 @@ break it until it's fixed, and using it is against SoundCloud's API terms
 (see below).
 
 **Updates:** from version 0.2.0 on, Cumulus checks GitHub for a new release
-(at start-up and every few hours). When there is one, it downloads it, checks
+(at start-up and every few hours; or click **Check for updates** at the bottom
+of the sidebar to check right away). When there is one, it downloads it, checks
 its digital signature, and an **Update to …** button appears at the bottom of
 the sidebar. One click and it restarts on the new version. If you have
 0.1.0, download the newest release once by hand.
