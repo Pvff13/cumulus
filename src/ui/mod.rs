@@ -489,8 +489,13 @@ impl App {
             }
             Msg::QueueTracks(tracks) => {
                 for t in tracks {
+                    if t.availability() == crate::api::models::Availability::Drm {
+                        self.queue.mark_unplayable(t.id);
+                    }
                     self.queue.update_track(t);
                 }
+                // Something just learned to be unplayable may have been "next".
+                self.player.set_next(self.queue.peek_next());
             }
             Msg::Desktop(e) => self.desktop_event(e),
             Msg::UpdateReady(ready) => self.update_ready = Some(ready),
@@ -522,18 +527,31 @@ impl App {
             Msg::Liked(Err(_)) => {}
             Msg::Player(player::Event::Failed { id, reason, upcoming }) => {
                 let title = self.queue_title(id);
+                let drm = reason == player::DRM_REASON;
                 self.error(format!("Skipped \u{201c}{title}\u{201d}: {reason}"));
                 self.queue.mark_unplayable(id);
                 if upcoming {
                     self.player.set_next(self.queue.peek_next());
                 } else {
-                    self.failures += 1;
+                    // DRM tracks are expected in label releases; they don't
+                    // count towards the "something's wrong, stop" limit.
+                    if !drm {
+                        self.failures += 1;
+                    }
                     if self.failures >= MAX_FAILURES {
                         self.error("Stopped: several tracks in a row couldn't be played.");
                         self.player.stop();
                     } else if let Some(item) = self.queue.advance() {
                         self.player.play(item, 0.0);
                         self.player.set_next(self.queue.peek_next());
+                    } else {
+                        // Nothing left that can play: stop instead of sitting on the failed track.
+                        self.player.stop();
+                        if drm {
+                            self.error(format!(
+                                "Nothing else here can play in Cumulus: “{title}” and the rest are DRM-protected. Open them on SoundCloud (↗)."
+                            ));
+                        }
                     }
                 }
             }
@@ -628,9 +646,23 @@ impl App {
 
     /// Starts playing `items[index]`, queueing the rest of the list after it.
     fn play_list(&mut self, items: Vec<QueueItem>, index: usize) {
+        // DRM-only tracks are skipped without trying them.
+        let drm: Vec<u64> = items
+            .iter()
+            .filter(|i| i.track.as_ref().is_some_and(|t| t.availability() == crate::api::models::Availability::Drm))
+            .map(|i| i.id)
+            .collect();
         self.queue.set(items, index);
+        for id in drm {
+            self.queue.mark_unplayable(id);
+        }
         self.queue_requested.clear();
         self.failures = 0;
+        if self.queue.current_id().is_some_and(|id| self.queue.is_unplayable(id)) && self.queue.advance().is_none() {
+            self.player.stop();
+            self.error("Nothing here can play in Cumulus: it's all DRM-protected. Open it on SoundCloud (↗) instead.");
+            return;
+        }
         if let Some(item) = self.queue.current().cloned() {
             // Debug builds: CUMULUS_DEV_START=<secs> starts the first track there (gapless testing).
             #[cfg(debug_assertions)]

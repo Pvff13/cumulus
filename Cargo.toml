@@ -1,6 +1,6 @@
 [package]
 name = "cumulus"
-version = "0.3.0"
+version = "0.3.1"
 edition = "2024"
 description = "Lightweight native desktop player for your SoundCloud library (unofficial)"
 license = "MIT"

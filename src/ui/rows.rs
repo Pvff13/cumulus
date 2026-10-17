@@ -35,12 +35,12 @@ pub fn artwork(ui: &mut egui::Ui, art: &ArtCache, url: Option<&str>, size: f32, 
 }
 
 /// Artwork with a ▶ overlay while the row is hovered. Returns true if clicked.
-fn play_artwork(ui: &mut egui::Ui, art: &ArtCache, url: Option<&str>, row_hovered: bool) -> bool {
+fn play_artwork(ui: &mut egui::Ui, art: &ArtCache, url: Option<&str>, row_hovered: bool, glyph: &str) -> bool {
     let resp = artwork(ui, art, url, ART, "t67x67");
     if row_hovered {
         let r = resp.rect;
         ui.painter().rect_filled(r, 4.0, egui::Color32::from_black_alpha(140));
-        ui.painter().text(r.center(), egui::Align2::CENTER_CENTER, "▶", egui::FontId::proportional(18.0), egui::Color32::WHITE);
+        ui.painter().text(r.center(), egui::Align2::CENTER_CENTER, glyph, egui::FontId::proportional(18.0), egui::Color32::WHITE);
     }
     resp.on_hover_cursor(CursorIcon::PointingHand).clicked()
 }
@@ -109,6 +109,8 @@ pub enum TrackAction {
     PlayNext,
     AddToQueue,
     OpenArtist,
+    /// Play a DRM-only track where it can play: on soundcloud.com.
+    OpenOnSoundCloud,
 }
 
 /// A track row: ▶ on the artwork (or double-click) plays, the heart opens
@@ -137,10 +139,15 @@ pub fn track_row(ui: &mut egui::Ui, cx: &RowCtx<'_>, track: &Track, note: Option
     match availability {
         Availability::Blocked => tag(ui, "Not available"),
         Availability::Preview => tag(ui, "Preview"),
+        Availability::Drm => {
+            ui.label(RichText::new("DRM").small().color(TAG))
+                .on_hover_text("Protected by SoundCloud: it only plays on soundcloud.com or SoundCloud's apps. Click to open it there.");
+        }
         Availability::Playable => {}
     }
     ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
-        if play_artwork(ui, cx.art, track.artwork(), hovered && availability != Availability::Blocked) {
+        let glyph = if availability == Availability::Drm { "↗" } else { "▶" };
+        if play_artwork(ui, cx.art, track.artwork(), hovered && availability != Availability::Blocked, glyph) {
             action = Some(TrackAction::Play);
         }
         ui.add_space(4.0);
@@ -152,6 +159,8 @@ pub fn track_row(ui: &mut egui::Ui, cx: &RowCtx<'_>, track: &Track, note: Option
             }
             if availability == Availability::Blocked {
                 title = title.color(MUTED).strikethrough();
+            } else if availability == Availability::Drm {
+                title = title.color(MUTED);
             }
             ui.add(egui::Label::new(title).truncate().selectable(false));
             ui.horizontal(|ui| {
@@ -165,6 +174,10 @@ pub fn track_row(ui: &mut egui::Ui, cx: &RowCtx<'_>, track: &Track, note: Option
             });
         });
     });
+    // DRM-only tracks can't play here: "play" opens them on soundcloud.com.
+    if availability == Availability::Drm && action == Some(TrackAction::Play) {
+        action = Some(TrackAction::OpenOnSoundCloud);
+    }
     action
 }
 

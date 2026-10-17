@@ -236,7 +236,11 @@ fn track_tile(
             ui.painter().text(center, Align2::CENTER_CENTER, "▶", FontId::proportional(16.0), Color32::WHITE);
         }
         if img.clicked() {
-            action = Some(HomeAction::PlayHistory(index));
+            action = Some(if track.availability() == crate::api::models::Availability::Drm {
+                HomeAction::Track(TrackAction::OpenOnSoundCloud, track.clone())
+            } else {
+                HomeAction::PlayHistory(index)
+            });
         }
         img.context_menu(|ui| {
             if let Some(a) = rows::track_menu(ui, track, liked.contains(&track.id)) {

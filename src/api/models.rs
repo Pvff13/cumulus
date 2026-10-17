@@ -69,6 +69,9 @@ pub enum Availability {
     Preview,
     /// Geo-blocked, removed or otherwise not streamable.
     Blocked,
+    /// Only offered as DRM-encrypted streams, which only SoundCloud's own
+    /// players (the website, its apps) can decrypt.
+    Drm,
 }
 
 impl Track {
@@ -77,8 +80,17 @@ impl Track {
             Some("BLOCK") => Availability::Blocked,
             Some("SNIP") => Availability::Preview,
             _ if self.streamable == Some(false) => Availability::Blocked,
+            _ if self.drm_only() => Availability::Drm,
             _ => Availability::Playable,
         }
+    }
+
+    /// Every full stream is encrypted (label/distributor content).
+    fn drm_only(&self) -> bool {
+        let Some(media) = &self.media else { return false };
+        let full = || media.transcodings.iter().filter(|t| !t.snipped);
+        full().any(|t| t.format.protocol.contains("encrypted"))
+            && !full().any(|t| matches!(t.format.protocol.as_str(), "hls" | "progressive"))
     }
 
     /// Track artwork, falling back to the uploader's avatar like soundcloud.com does.
@@ -304,6 +316,24 @@ mod tests {
         assert!(m.local_id() > 1 << 62);
         assert!(matches!(items[1], HomeItem::Playlist(_)));
         assert!(matches!(items[2], HomeItem::Other));
+    }
+
+    #[test]
+    fn drm_only_tracks() {
+        let track = |protocols: &[&str]| -> Track {
+            let tc: Vec<String> = protocols
+                .iter()
+                .map(|p| format!(r#"{{"url":"u","preset":"aac_160k","snipped":false,"format":{{"protocol":"{p}","mime_type":"audio/mp4"}}}}"#))
+                .collect();
+            let json = format!(
+                r#"{{"id":1,"title":"t","user":{{"username":"u"}},"policy":"MONETIZE","media":{{"transcodings":[{}]}}}}"#,
+                tc.join(",")
+            );
+            serde_json::from_str(&json).unwrap()
+        };
+        assert_eq!(track(&["cbc-encrypted-hls", "ctr-encrypted-hls"]).availability(), Availability::Drm);
+        assert_eq!(track(&["hls", "ctr-encrypted-hls"]).availability(), Availability::Playable);
+        assert_eq!(track(&["hls"]).availability(), Availability::Playable);
     }
 
     #[test]

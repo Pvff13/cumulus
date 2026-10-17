@@ -99,9 +99,12 @@ and every track credits its artist and links back to SoundCloud.
 - **Formats:** plain HLS AAC (160 kbps when your account gets it, else 96),
   else progressive MP3. Decoding happens natively (symphonia); Windows'
   own audio stack does any resampling.
-- **Skipped, with a message:** geo-blocked tracks, Go+ preview-only tracks,
-  and DRM-protected tracks (SoundCloud's encrypted streams, which only its own
-  apps may play). After 5 failures in a row (e.g. offline) playback stops
+- **Skipped, with a message:** geo-blocked tracks and Go+ preview-only tracks.
+- **DRM-protected tracks** (many label releases are only sent encrypted, and
+  only SoundCloud's own site and apps hold the keys) are tagged **DRM** and
+  dimmed in every list. Clicking one opens it on soundcloud.com, where it
+  plays. Queues skip them straight away without trying, so a mix with a few
+  of them just plays past. After 5 failures in a row (e.g. offline) playback stops
   instead of skipping through the whole list.
 
 ## Now-playing pop-out (for streaming)

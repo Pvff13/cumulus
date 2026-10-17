@@ -318,6 +318,10 @@ impl App {
                     self.player.set_next(self.queue.peek_next());
                 }
             }
+            TrackAction::OpenOnSoundCloud => {
+                self.ctx.open_url(egui::OpenUrl::new_tab(&track.permalink_url));
+                self.info(format!("“{title}” is DRM-protected, so it only plays on SoundCloud. Opened it in your browser."));
+            }
             TrackAction::OpenArtist => self.open_artist(ArtistInfo {
                 id: track.user.id,
                 username: track.user.username.clone(),

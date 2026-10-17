@@ -17,7 +17,7 @@ use std::thread;
 use std::time::Duration;
 
 use output::{Output, SampleQueue, Shared};
-pub use source::QueueItem;
+pub use source::{DRM_REASON, QueueItem};
 use source::{Source, Step};
 
 use crate::api::Api;

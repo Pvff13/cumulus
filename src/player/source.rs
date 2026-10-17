@@ -26,6 +26,9 @@ use crate::api::client::Agent;
 use crate::api::models::{Availability, Track, Transcoding};
 use crate::api::{Api, ApiError};
 
+/// Failure reason for DRM-only tracks (the UI skips these quietly).
+pub const DRM_REASON: &str = "DRM-protected: only plays on SoundCloud's own site and apps";
+
 /// What the engine is asked to play: a track id, plus the full track if we
 /// already have it (playlist entries may still be stubs).
 #[derive(Debug, Clone)]
@@ -67,6 +70,7 @@ pub fn open(api: &Api, item: &QueueItem, start: f64) -> Result<Box<dyn Source>, 
     match track.availability() {
         Availability::Blocked => return Err("not available in your region".into()),
         Availability::Preview => return Err("preview only (needs SoundCloud Go+)".into()),
+        Availability::Drm => return Err(DRM_REASON.into()),
         Availability::Playable => {}
     }
     let url = match resolve(api, &track) {
@@ -115,9 +119,7 @@ fn pick(track: &Track) -> Result<&Transcoding, String> {
         });
     match best {
         Some(t) => Ok(t),
-        None if all.iter().any(|t| t.format.protocol.contains("encrypted")) => {
-            Err("DRM-protected: only plays in SoundCloud's own apps".into())
-        }
+        None if all.iter().any(|t| t.format.protocol.contains("encrypted")) => Err(DRM_REASON.into()),
         None => Err("no supported stream for this track".into()),
     }
 }
@@ -186,7 +188,7 @@ impl HlsSource {
     fn open(agent: Agent, track_id: u64, playlist_url: &str, start: f64) -> Result<Self, String> {
         let text = agent.get_text(playlist_url).map_err(|e| e.to_string())?;
         let playlist = hls::parse(&text).map_err(|e| match e {
-            HlsError::Encrypted => "DRM-protected: only plays in SoundCloud's own apps".to_string(),
+            HlsError::Encrypted => DRM_REASON.to_string(),
             HlsError::Invalid => "unexpected stream format".to_string(),
         })?;
         let init_url = playlist.init_url.clone().ok_or("unexpected stream format (no init segment)")?;
