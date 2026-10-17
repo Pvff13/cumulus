@@ -1,14 +1,27 @@
-//! Self-update from the local build folder.
+//! Self-update, from two places:
 //!
-//! New versions are built on this machine (`cargo build --release` writes
-//! `target/release/cumulus.exe`). An installed copy notices a newer build
-//! there and, when the user agrees, swaps itself: Windows lets a running .exe
-//! be renamed, so the old file is moved aside, the new one copied into place
-//! and started, and the old file is deleted on the next start.
+//! - **GitHub Releases** (everyone): the latest release's `cumulus.exe` is
+//!   downloaded and only kept if its signature checks out (see `signing`).
+//! - **The local build folder** (the maintainer's own copy): a newer
+//!   `target/release/cumulus.exe` on this machine.
+//!
+//! Either way the swap is the same: Windows lets a running .exe be renamed,
+//! so the old file is moved aside, the new one copied into place and
+//! started, and the old file is deleted on the next start. Nothing is
+//! installed until the user clicks the button.
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::time::SystemTime;
+use std::time::{Duration, Instant, SystemTime};
+
+use serde::Deserialize;
+
+use crate::api::client::Agent;
+
+/// How often to ask GitHub for a new release.
+const REMOTE_EVERY: Duration = Duration::from_secs(6 * 3600);
+const MAX_EXE: u64 = 64 * 1024 * 1024;
 
 pub const BUILD_ID_ARG: &str = "--build-id";
 
@@ -24,6 +37,8 @@ fn old_path(exe: &Path) -> PathBuf {
 /// Removes the previous version left behind by an update. Right after an
 /// update the old process may still be closing, so keep trying for a bit.
 pub fn cleanup() {
+    // Downloaded updates that have been installed (or superseded).
+    let _ = std::fs::remove_dir_all(crate::paths::data_dir().join("update"));
     let Ok(exe) = std::env::current_exe() else { return };
     let old = old_path(&exe);
     if !old.exists() {
@@ -53,16 +68,48 @@ fn source() -> Option<PathBuf> {
     (src_real != me).then_some(src_real)
 }
 
-/// Remembers the source file's timestamp so the (cheap) check only asks a
-/// build for its number when the file actually changed.
+/// An update that is ready to install.
+#[derive(Debug, Clone)]
+pub struct Ready {
+    /// The new exe (a verified download, or the local build).
+    pub exe: PathBuf,
+    /// "0.2.1" for a release, None for a local build.
+    pub version: Option<String>,
+}
+
 #[derive(Default)]
 pub struct Checker {
+    /// Local source timestamp, so the build is only asked for its number
+    /// when the file actually changed.
     seen: Option<SystemTime>,
+    last_remote: Option<Instant>,
+    /// Releases that failed to download or verify; not retried this session.
+    rejected: HashSet<String>,
 }
 
 impl Checker {
-    /// The source exe, if it holds a newer build than this one.
-    pub fn newer_build(&mut self) -> Option<PathBuf> {
+    /// A newer version, if there is one: the local build folder first, then
+    /// GitHub (at most every few hours).
+    pub fn check(&mut self, agent: &Agent) -> Option<Ready> {
+        if let Some(exe) = self.newer_build() {
+            return Some(Ready { exe, version: None });
+        }
+        if cfg!(debug_assertions) || self.last_remote.is_some_and(|t| t.elapsed() < REMOTE_EVERY) {
+            return None;
+        }
+        self.last_remote = Some(Instant::now());
+        match newer_release(agent, &self.rejected) {
+            Ok(r) => r,
+            Err((version, why)) => {
+                eprintln!("cumulus update {version}: {why}");
+                self.rejected.insert(version);
+                None
+            }
+        }
+    }
+
+    /// The local source exe, if it holds a newer build than this one.
+    fn newer_build(&mut self) -> Option<PathBuf> {
         let src = source()?;
         let modified = std::fs::metadata(&src).and_then(|m| m.modified()).ok()?;
         if self.seen == Some(modified) {
@@ -87,6 +134,64 @@ fn read_build_id(exe: &Path) -> Option<u64> {
     String::from_utf8_lossy(&out.stdout).trim().parse().ok()
 }
 
+#[derive(Deserialize)]
+struct Release {
+    tag_name: String,
+    #[serde(default)]
+    assets: Vec<Asset>,
+}
+
+#[derive(Deserialize)]
+struct Asset {
+    name: String,
+    browser_download_url: String,
+}
+
+/// `https://github.com/owner/repo` (from Cargo.toml) -> the latest-release API URL.
+fn latest_release_url() -> Option<String> {
+    let repo = env!("CARGO_PKG_REPOSITORY").trim_end_matches('/');
+    let path = repo.strip_prefix("https://github.com/")?;
+    Some(format!("https://api.github.com/repos/{path}/releases/latest"))
+}
+
+/// "v0.10.2" -> (0, 10, 2); anything unparsable counts as 0.
+fn parse_version(v: &str) -> (u64, u64, u64) {
+    let mut parts = v.trim().trim_start_matches('v').split('.').map(|p| {
+        p.chars().take_while(char::is_ascii_digit).collect::<String>().parse().unwrap_or(0)
+    });
+    (parts.next().unwrap_or(0), parts.next().unwrap_or(0), parts.next().unwrap_or(0))
+}
+
+pub fn current_version() -> &'static str {
+    env!("CARGO_PKG_VERSION")
+}
+
+/// Downloads the latest release if it's newer, and keeps it only if the
+/// signature verifies. Err carries the release version so it isn't retried.
+fn newer_release(agent: &Agent, rejected: &HashSet<String>) -> Result<Option<Ready>, (String, String)> {
+    let Some(url) = latest_release_url() else { return Ok(None) };
+    // No connection, rate limited, no release yet: just try again later.
+    let Ok(body) = agent.get_bytes(&url, 1024 * 1024) else { return Ok(None) };
+    let Ok(release) = serde_json::from_slice::<Release>(&body) else { return Ok(None) };
+    let version = release.tag_name.trim_start_matches('v').to_string();
+    if parse_version(&version) <= parse_version(current_version()) || rejected.contains(&version) {
+        return Ok(None);
+    }
+    let fail = |why: &str| (version.clone(), why.to_string());
+    let asset = |name: &str| release.assets.iter().find(|a| a.name == name).map(|a| a.browser_download_url.clone());
+    let exe_url = asset("cumulus.exe").ok_or_else(|| fail("release has no cumulus.exe"))?;
+    let sig_url = asset("cumulus.exe.sig").ok_or_else(|| fail("release has no signature"))?;
+    let sig = agent.get_bytes(&sig_url, 4096).map_err(|e| fail(&format!("signature download failed ({e})")))?;
+    let exe = agent.get_bytes(&exe_url, MAX_EXE).map_err(|e| fail(&format!("download failed ({e})")))?;
+    crate::signing::verify(&version, &exe, &String::from_utf8_lossy(&sig)).map_err(|e| fail(&e))?;
+    // Verified: only now does it touch the disk.
+    let dir = crate::paths::data_dir().join("update");
+    std::fs::create_dir_all(&dir).map_err(|e| fail(&e.to_string()))?;
+    let path = dir.join(format!("cumulus-{version}.exe"));
+    std::fs::write(&path, &exe).map_err(|e| fail(&e.to_string()))?;
+    Ok(Some(Ready { exe: path, version: Some(version) }))
+}
+
 /// Swaps in the new exe and starts it. The caller then quits.
 pub fn apply(new_exe: &Path) -> Result<(), String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
@@ -99,4 +204,40 @@ pub fn apply(new_exe: &Path) -> Result<(), String> {
     }
     Command::new(&exe).spawn().map_err(|e| format!("couldn't start the new version ({e})"))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn versions_compare_numerically() {
+        assert!(parse_version("v0.10.0") > parse_version("0.9.9"));
+        assert!(parse_version("0.2.0") > parse_version("0.1.0"));
+        assert_eq!(parse_version("v1.2.3-beta"), (1, 2, 3));
+        assert_eq!(latest_release_url().as_deref(), Some("https://api.github.com/repos/Pvff13/cumulus/releases/latest"));
+    }
+
+    /// Live: the published latest release downloads and its signature
+    /// verifies against the built-in key; a flipped byte is rejected.
+    /// Run with `cargo test -- --ignored`.
+    #[test]
+    #[ignore = "hits GitHub"]
+    fn latest_release_verifies() {
+        let agent = Agent::new();
+        let release: Release =
+            serde_json::from_slice(&agent.get_bytes(&latest_release_url().unwrap(), 1 << 20).unwrap()).unwrap();
+        let version = release.tag_name.trim_start_matches('v');
+        let get = |name: &str| {
+            let a = release.assets.iter().find(|a| a.name == name).expect(name);
+            agent.get_bytes(&a.browser_download_url, MAX_EXE).unwrap()
+        };
+        let (mut exe, sig) = (get("cumulus.exe"), get("cumulus.exe.sig"));
+        let sig = String::from_utf8_lossy(&sig).to_string();
+        crate::signing::verify(version, &exe, &sig).expect("published release verifies");
+        let mid = exe.len() / 2;
+        exe[mid] ^= 0x40;
+        assert!(crate::signing::verify(version, &exe, &sig).is_err(), "tampered download must be rejected");
+        println!("release {version}: {} bytes, signature OK, tamper rejected", exe.len());
+    }
 }

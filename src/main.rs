@@ -7,6 +7,7 @@ mod cache;
 mod config;
 mod paths;
 mod player;
+mod signing;
 mod ui;
 mod update;
 
@@ -28,6 +29,29 @@ fn main() {
     #[cfg(debug_assertions)]
     if let Some(dir) = std::env::args().skip_while(|a| a != "--dev-icon").nth(1) {
         return ui::write_icon_files(std::path::Path::new(&dir));
+    }
+    // Maintainer tools: `--dev-keygen <key>` and `--dev-sign <key> <exe> <version>`.
+    #[cfg(debug_assertions)]
+    {
+        let args: Vec<String> = std::env::args().collect();
+        let after = |flag: &str, n: usize| -> Option<Vec<String>> {
+            let i = args.iter().position(|a| a == flag)?;
+            (args.len() > i + n).then(|| args[i + 1..=i + n].to_vec())
+        };
+        if let Some(a) = after("--dev-keygen", 1) {
+            match signing::tools::keygen(std::path::Path::new(&a[0])) {
+                Ok(public) => println!("{public}"),
+                Err(e) => eprintln!("keygen: {e}"),
+            }
+            return;
+        }
+        if let Some(a) = after("--dev-sign", 3) {
+            match signing::tools::sign(std::path::Path::new(&a[0]), std::path::Path::new(&a[1]), &a[2]) {
+                Ok(sig) => println!("{sig}"),
+                Err(e) => eprintln!("sign: {e}"),
+            }
+            return;
+        }
     }
 
     set_app_id();

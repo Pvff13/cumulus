@@ -1,6 +1,6 @@
 [package]
 name = "cumulus"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 description = "Lightweight native desktop player for your SoundCloud library (unofficial)"
 license = "MIT"
@@ -33,6 +33,9 @@ rtrb = "0.4"
 souvlaki = "0.8.3"
 tray-icon = "0.26.1"
 raw-window-handle = "0.6"
+ed25519-dalek = "3"
+sha2 = "0.11"
+getrandom = "0.3"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 eframe = { version = "0.37.0", default-features = false, features = ["glow", "default_fonts", "links", "x11", "wayland"] }

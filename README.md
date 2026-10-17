@@ -12,7 +12,7 @@ native audio, no bundled browser. **Unofficial; not affiliated with SoundCloud.*
 You don't need any programming tools for this.
 
 1. Go to the **[latest release](https://github.com/Pvff13/cumulus/releases/latest)**
-   and click **`cumulus_0.1.0_x64-setup.exe`** under *Assets* to download it.
+   and click the **`cumulus_…_x64-setup.exe`** file under *Assets* to download it.
 2. Open the downloaded file. Windows will probably show a blue box saying
    **"Windows protected your PC"**, because this small free app isn't
    paid-for "code signed". Click **More info**, then **Run anyway**.
@@ -28,8 +28,13 @@ Uninstall**.
 Good to know: Cumulus is unofficial and uses the same behind-the-scenes
 connection as the soundcloud.com website, so a change on SoundCloud's side can
 break it until it's fixed, and using it is against SoundCloud's API terms
-(see below). Installs from the download don't update themselves yet;
-download the newest release to update.
+(see below).
+
+**Updates:** from version 0.2.0 on, Cumulus checks GitHub for a new release
+(at start-up and every few hours). When there is one, it downloads it, checks
+its digital signature, and an **Update to …** button appears at the bottom of
+the sidebar. One click and it restarts on the new version. If you have
+0.1.0, download the newest release once by hand.
 
 ## How it talks to SoundCloud
 
@@ -151,7 +156,16 @@ The binary is `target/release/cumulus.exe` (about 9.6 MB).
 
 ### Updates
 
-An installed Cumulus updates itself from this project's build folder: after
+**From GitHub (everyone).** Every few hours Cumulus asks GitHub for the
+latest release. If it's newer, it downloads that release's `cumulus.exe` and
+`cumulus.exe.sig` and checks the signature against the public key built into
+the app (`src/signing.rs`). The signature covers the version number and the
+exe's SHA-256, so a tampered file, a different file or an older release
+passed off as new is rejected and nothing is written. Only a verified update
+is saved, and only a click on **Update to …** installs it (same swap as below).
+
+**From the build folder (the maintainer's own copy).** An installed Cumulus
+also updates itself from this project's build folder: after
 `cargo build --release`, the running app notices the newer
 `target/release/cumulus.exe` (at start-up and every 10 minutes) and shows
 **Restart to update** in the sidebar. Clicking it swaps in the new exe
@@ -189,6 +203,21 @@ exe (that's what Explorer, shortcuts and the taskbar show).
 
 Tests: `cargo test` (offline) and `cargo test -- --ignored` (hits SoundCloud).
 
+### Making a release
+
+1. Bump `version` in `Cargo.toml`, then commit.
+2. Build the public installer (see above). That produces
+   `target/public/release/cumulus.exe` and `dist/cumulus_<ver>_x64-setup.exe`.
+3. Sign the exe with the private key (kept **outside** the repo, e.g.
+   `%APPDATA%\Cumulus-release\release.key`; back it up, because without it no
+   further updates can be signed):
+   `cargo run -- --dev-sign <key> target/public/release/cumulus.exe <ver> > cumulus.exe.sig`
+4. Create a GitHub release tagged `v<ver>` with three files: the installer,
+   `cumulus.exe` and `cumulus.exe.sig`.
+
+`cargo run -- --dev-keygen <path>` creates a new key pair (only needed once)
+and prints the public key for `RELEASE_KEY` in `src/signing.rs`.
+
 ## Dependencies
 
 | Crate | Why |
@@ -204,6 +233,8 @@ Tests: `cargo test` (offline) and `cargo test -- --ignored` (hits SoundCloud).
 | `souvlaki` | Windows media overlay / media keys (also MPRIS and macOS Now Playing). |
 | `tray-icon` | Tray icon and its menu. |
 | `embed-resource` (build only) | Compiles the icon into the .exe with the Windows SDK's `rc.exe`. Not part of the app at runtime. |
+| `ed25519-dalek`, `sha2` | Checking update signatures (and, in debug builds only, signing releases). |
+| `getrandom` | Creating the signing key (debug-only tool). |
 | `raw-window-handle` | Hands the window handle to the media controls. |
 | `memmap2` | Memory-maps Windows' own fonts (Segoe UI Symbol, CJK, emoji...) as fallbacks for the decorative Unicode common in track names, without loading them into RAM. |
 

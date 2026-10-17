@@ -46,8 +46,8 @@ enum Msg {
     Desktop(DesktopEvent),
     Home { cached: bool, result: Result<Vec<Selection>, ApiError> },
     History(Result<Vec<Arc<Track>>, ApiError>),
-    /// A newer build is ready to install (path of the new exe).
-    UpdateReady(std::path::PathBuf),
+    /// A newer version is downloaded/verified and ready to install.
+    UpdateReady(crate::update::Ready),
 }
 
 enum Screen {
@@ -181,7 +181,7 @@ pub struct App {
 
     update_checker: Arc<std::sync::Mutex<crate::update::Checker>>,
     last_update_check: Option<Instant>,
-    update_ready: Option<std::path::PathBuf>,
+    update_ready: Option<crate::update::Ready>,
 }
 
 /// How often to look for a newer build.
@@ -472,7 +472,7 @@ impl App {
                 }
             }
             Msg::Desktop(e) => self.desktop_event(e),
-            Msg::UpdateReady(path) => self.update_ready = Some(path),
+            Msg::UpdateReady(ready) => self.update_ready = Some(ready),
             Msg::Home { result: Err(ApiError::Unauthorized), .. } => self.sign_out(Some(ApiError::Unauthorized.to_string())),
             Msg::Home { cached, result } => self.home_loaded(cached, result),
             Msg::History(Ok(tracks)) => self.home.history = tracks,
@@ -534,16 +534,16 @@ impl App {
         }
         self.last_update_check = Some(Instant::now());
         let checker = self.update_checker.clone();
-        self.spawn(move |_, send| {
-            if let Some(path) = checker.lock().unwrap().newer_build() {
-                send(Msg::UpdateReady(path));
+        self.spawn(move |api, send| {
+            if let Some(ready) = checker.lock().unwrap().check(&api.agent()) {
+                send(Msg::UpdateReady(ready));
             }
         });
     }
 
     fn install_update(&mut self) {
-        let Some(path) = self.update_ready.clone() else { return };
-        match crate::update::apply(&path) {
+        let Some(ready) = self.update_ready.clone() else { return };
+        match crate::update::apply(&ready.exe) {
             Ok(()) => {
                 self.quitting = true;
                 self.ctx.send_viewport_cmd(egui::ViewportCommand::Close);
@@ -705,13 +705,19 @@ impl App {
                             .small()
                             .color(MUTED),
                     );
-                    if self.update_ready.is_some() {
+                    if let Some(ready) = &self.update_ready {
                         ui.add_space(4.0);
-                        let button = egui::Button::new(RichText::new("⟳  Restart to update").strong()).fill(ACCENT);
-                        if ui
-                            .add_sized([176.0, 28.0], button)
-                            .on_hover_text("A newer build of Cumulus is ready. Restarts in a second; your settings and sign-in are kept.")
-                            .clicked()
+                        let label = match &ready.version {
+                            Some(v) => format!("⟳  Update to {v}"),
+                            None => "⟳  Restart to update".to_string(),
+                        };
+                        let tip = format!(
+                            "{} is downloaded and verified. Restarts in a second; your settings and sign-in are kept. (Now running {}.)",
+                            ready.version.as_deref().map_or("A newer build".to_string(), |v| format!("Cumulus {v}")),
+                            crate::update::current_version(),
+                        );
+                        let button = egui::Button::new(RichText::new(label).strong()).fill(ACCENT);
+                        if ui.add_sized([176.0, 28.0], button).on_hover_text(tip).clicked()
                         {
                             self.install_update();
                         }
