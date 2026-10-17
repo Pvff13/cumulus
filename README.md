@@ -3,10 +3,6 @@
 A lightweight native desktop player for your SoundCloud library: Rust + egui,
 native audio, no bundled browser. **Unofficial; not affiliated with SoundCloud.**
 
-> Status: all 5 milestones built. Windows 11 is the tested platform; the code
-> avoids Windows-only APIs where that was cheap, but macOS and Linux builds
-> haven't been tried.
-
 ## Install (Windows 10 / 11)
 
 You don't need any programming tools for this.
