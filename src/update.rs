@@ -46,7 +46,8 @@ fn source() -> Option<PathBuf> {
         return None;
     }
     let configured = crate::config::Config::load().update_source;
-    let src = PathBuf::from(configured.unwrap_or_else(|| env!("CUMULUS_UPDATE_SOURCE").to_string()));
+    // Public builds have no built-in source; `update_source` in config.json can still set one.
+    let src = PathBuf::from(configured.or_else(|| option_env!("CUMULUS_UPDATE_SOURCE").map(str::to_string))?);
     let me = std::env::current_exe().ok()?.canonicalize().ok()?;
     let src_real = src.canonicalize().ok()?;
     (src_real != me).then_some(src_real)

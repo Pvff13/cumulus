@@ -7,6 +7,30 @@ native audio, no bundled browser. **Unofficial; not affiliated with SoundCloud.*
 > avoids Windows-only APIs where that was cheap, but macOS and Linux builds
 > haven't been tried.
 
+## Install (Windows 10 / 11)
+
+You don't need any programming tools for this.
+
+1. Go to the **[latest release](https://github.com/Pvff13/cumulus/releases/latest)**
+   and click **`cumulus_0.1.0_x64-setup.exe`** under *Assets* to download it.
+2. Open the downloaded file. Windows will probably show a blue box saying
+   **"Windows protected your PC"**, because this small free app isn't
+   paid-for "code signed". Click **More info**, then **Run anyway**.
+3. Click through the installer (*Next* / *Install* / *Finish*). It installs
+   just for you, so it won't ask for an administrator password.
+4. Open **Cumulus** from the Start menu and click **Sign in with
+   SoundCloud**. Sign in on SoundCloud's own page (email and password works
+   best); the window closes by itself when you're done.
+
+To uninstall: Windows **Settings → Apps → Installed apps → Cumulus →
+Uninstall**.
+
+Good to know: Cumulus is unofficial and uses the same behind-the-scenes
+connection as the soundcloud.com website, so a change on SoundCloud's side can
+break it until it's fixed, and using it is against SoundCloud's API terms
+(see below). Installs from the download don't update themselves yet;
+download the newest release to update.
+
 ## How it talks to SoundCloud
 
 SoundCloud only issues official API keys to Artist Pro subscribers, so Cumulus
@@ -144,6 +168,11 @@ location, set `update_source` in `config.json` to the path of a
 cargo install cargo-packager --locked
 cargo packager --release
 ```
+
+For a public download, build with `CUMULUS_PUBLIC_BUILD=1` (no built-in
+local update path) and remap your user folder out of the binary, e.g.
+`CARGO_ENCODED_RUSTFLAGS="--remap-path-prefix=C:\Users\<you>=~"`, ideally
+with a separate `CARGO_TARGET_DIR`.
 
 This builds `dist/cumulus_<version>_x64-setup.exe` (about 4.5 MB, NSIS). It
 installs per-user (no admin prompt) to `%LOCALAPPDATA%\Cumulus`, adds a
