@@ -200,3 +200,9 @@ depending on whether the window is visible. Working-set sums for Chrome
 slightly overcount shared pages, which is why private memory is shown too.
 
 Binary about 9.6 MB; installer about 4.5 MB.
+
+## License
+
+MIT, see [LICENSE](LICENSE). This covers Cumulus's own code only; it grants
+nothing over SoundCloud's service, API or content, which remain subject to
+SoundCloud's terms.
