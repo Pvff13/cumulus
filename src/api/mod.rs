@@ -55,6 +55,12 @@ impl Api {
         "/mixed-selections?limit=20".to_string()
     }
 
+    /// Tracks similar to `track_id` (what SoundCloud's autoplay plays next).
+    pub fn related(&self, track_id: u64) -> Result<Vec<Track>, ApiError> {
+        let page: Page<Track> = self.get(&format!("/tracks/{track_id}/related?limit=30"))?;
+        Ok(page.collection)
+    }
+
     /// Tracks the user played recently, newest first.
     pub fn play_history_url() -> String {
         "/me/play-history/tracks?limit=50".to_string()

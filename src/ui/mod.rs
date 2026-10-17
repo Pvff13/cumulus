@@ -46,6 +46,8 @@ enum Msg {
     Desktop(DesktopEvent),
     Home { cached: bool, result: Result<Vec<Selection>, ApiError> },
     History(Result<Vec<Arc<Track>>, ApiError>),
+    /// Similar tracks to continue with after `after` (the queue's last track).
+    Autoplay { after: u64, result: Result<Vec<Track>, ApiError> },
     /// A newer version is downloaded/verified and ready to install.
     UpdateReady(crate::update::Ready),
 }
@@ -171,6 +173,10 @@ pub struct App {
     status: Option<Status>,
     /// Consecutive tracks that failed to play; stops runaway skipping when offline.
     failures: u32,
+    /// Keep playing similar tracks when the queue runs out.
+    autoplay: bool,
+    /// The last-track id autoplay already fetched for (so it asks once).
+    autoplay_for: Option<u64>,
 
     desktop: Desktop,
     close_to_tray: bool,
@@ -245,6 +251,8 @@ impl App {
             pending_seek: None,
             status: None,
             failures: 0,
+            autoplay: config.autoplay,
+            autoplay_for: None,
             desktop,
             close_to_tray: config.close_to_tray,
             hidden: false,
@@ -501,7 +509,14 @@ impl App {
                     }
                 }
             }
-            Msg::Player(player::Event::Ended) => {}
+            Msg::Player(player::Event::Ended) => {
+                if self.autoplay {
+                    self.info("End of queue.");
+                } else {
+                    self.info("End of queue. Turn on ∞ autoplay to keep going with similar tracks.");
+                }
+            }
+            Msg::Autoplay { after, result } => self.autoplay_loaded(after, result),
         }
     }
 
@@ -615,6 +630,57 @@ impl App {
                 self.fetch_queue_tracks(vec![id]);
             }
         }
+        self.autoplay_if_needed();
+    }
+
+    /// When the last track of the queue starts, fetch similar tracks to add
+    /// after it. The engine opens the next track ~30 s before the end, so this
+    /// continues without a gap.
+    fn autoplay_if_needed(&mut self) {
+        if !self.autoplay || self.queue.repeat != queue::Repeat::Off || self.queue.peek_next().is_some() {
+            return;
+        }
+        let Some(current) = self.queue.current_id() else { return };
+        if self.autoplay_for == Some(current) || self.player.now().is_none_or(|(id, _)| id != current) {
+            return;
+        }
+        self.autoplay_for = Some(current);
+        self.spawn(move |api, send| send(Msg::Autoplay { after: current, result: api.related(current) }));
+    }
+
+    fn autoplay_loaded(&mut self, after: u64, result: Result<Vec<Track>, ApiError>) {
+        // Only if we're still at the end of the queue with autoplay on.
+        if !self.autoplay || self.queue.current_id() != Some(after) || self.queue.peek_next().is_some() {
+            return;
+        }
+        let Ok(tracks) = result else { return };
+        let mut added = 0;
+        for t in tracks {
+            if t.availability() != crate::api::models::Availability::Playable || self.queue.contains(t.id) {
+                continue;
+            }
+            self.queue.add_to_end(QueueItem { id: t.id, track: Some(Arc::new(t)) });
+            added += 1;
+            if added == 20 {
+                break;
+            }
+        }
+        if added > 0 {
+            self.player.set_next(self.queue.peek_next());
+        }
+    }
+
+    pub(super) fn set_autoplay(&mut self, on: bool) {
+        self.autoplay = on;
+        self.autoplay_for = None;
+        let mut config = Config::load();
+        config.autoplay = on;
+        config.save();
+        self.info(if on {
+            "Autoplay on: similar tracks play when the queue runs out."
+        } else {
+            "Autoplay off: playback stops at the end of the queue."
+        });
     }
 
     /// Fetches details for queue entries only known by id (once each).

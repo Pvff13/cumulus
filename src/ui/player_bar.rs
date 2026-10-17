@@ -155,7 +155,7 @@ impl App {
             ui.allocate_ui_with_layout(vec2(center, HEIGHT - 16.0), Layout::top_down(Align::Center), |ui| {
                 ui.add_space(4.0);
                 ui.horizontal(|ui| {
-                    let controls = 5.0 * 34.0;
+                    let controls = 6.0 * 34.0;
                     ui.add_space(((ui.available_width() - controls) / 2.0).max(0.0));
                     if icon(ui, "🔀", self.queue.shuffle, "Shuffle").clicked() {
                         self.queue.set_shuffle(!self.queue.shuffle);
@@ -183,6 +183,14 @@ impl App {
                     if icon(ui, glyph, self.queue.repeat != Repeat::Off, tip).clicked() {
                         self.queue.repeat = self.queue.repeat.cycle();
                         self.player.set_next(self.queue.peek_next());
+                    }
+                    let tip = if self.autoplay {
+                        "Autoplay on: similar tracks play when the queue runs out"
+                    } else {
+                        "Autoplay off: stop at the end of the queue"
+                    };
+                    if icon(ui, "∞", self.autoplay, tip).clicked() {
+                        self.set_autoplay(!self.autoplay);
                     }
                 });
                 ui.horizontal(|ui| {

@@ -87,7 +87,11 @@ and every track credits its artist and links back to SoundCloud.
   of that list becomes the queue (playlists included, even the parts not
   loaded yet).
 - Bottom bar: shuffle, previous, play/pause, next, repeat (off / all / one),
-  seek bar and volume. The title and artist link to SoundCloud.
+  ∞ autoplay, seek bar and volume. The title and artist link to SoundCloud.
+- **Autoplay** (∞, on by default): when the last track of whatever you're
+  playing starts, Cumulus adds up to 20 similar tracks (SoundCloud's "related
+  tracks", skipping ones already queued) so the music carries on without a
+  gap. Turn it off to stop at the end of the list.
 - Keyboard: **Space** play/pause, **←/→** seek 5 s, **↑/↓** volume, **/** search.
 - **Gapless-ish:** the next track is opened about 30 s before the current one
   ends, and its audio is appended straight after the current track's audio.

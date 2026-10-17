@@ -182,6 +182,11 @@ impl Queue {
         }
     }
 
+    /// Whether `id` is anywhere in the queue.
+    pub fn contains(&self, id: u64) -> bool {
+        self.items.iter().any(|i| i.id == id)
+    }
+
     /// Queues `item` at the end.
     pub fn add_to_end(&mut self, item: QueueItem) {
         self.items.push(item);

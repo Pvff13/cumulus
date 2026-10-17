@@ -42,7 +42,12 @@ impl App {
         let upcoming = self.queue.len() - pos - 1;
         ui.label(RichText::new(format!("Next up · {upcoming}")).small().color(MUTED));
         if upcoming == 0 {
-            ui.label(RichText::new("Nothing after this track.").color(MUTED));
+            let note = if self.autoplay {
+                "Nothing after this track yet. Autoplay will add similar tracks."
+            } else {
+                "Nothing after this track. (Autoplay is off.)"
+            };
+            ui.label(RichText::new(note).color(MUTED));
         }
 
         let mut missing = Vec::new();
