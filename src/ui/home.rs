@@ -121,6 +121,7 @@ impl App {
             self.load_home();
         }
         let mut refresh = false;
+        let mut menu = super::overlay_ui::MenuResult::default();
         ui.horizontal(|ui| {
             ui.heading("Home");
             if self.home.loading {
@@ -128,6 +129,7 @@ impl App {
             }
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 refresh = ui.add_enabled(!self.home.loading, egui::Button::new("↻")).on_hover_text("Refresh").clicked();
+                menu = super::overlay_ui::overlay_menu(ui, &mut self.overlay_menu);
             });
         });
         status_line(ui, self.home.error.as_deref(), self.home.from_cache && self.home.loading);
@@ -205,6 +207,7 @@ impl App {
             Some(HomeAction::Track(a, t)) => self.track_action(a, t),
             None => {}
         }
+        self.handle_menu(menu);
         if refresh {
             self.load_home();
         }

@@ -44,6 +44,7 @@ impl App {
         if !self.feeds.get(&kind).is_some_and(|f| f.started) {
             self.load_feed(kind, true);
         }
+        let mut menu = super::overlay_ui::MenuResult::default();
         let feed = &self.feeds[&kind];
         let mut refresh = false;
         ui.horizontal(|ui| {
@@ -55,6 +56,7 @@ impl App {
             }
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 refresh = ui.add_enabled(!feed.loading, egui::Button::new("↻")).on_hover_text("Refresh").clicked();
+                menu = super::overlay_ui::overlay_menu(ui, &mut self.overlay_menu);
             });
         });
         status_line(ui, feed.error.as_deref(), feed.from_cache && feed.loading);
@@ -143,6 +145,7 @@ impl App {
         if refresh {
             self.load_feed(kind, true);
         }
+        self.handle_menu(menu);
     }
 
     fn playlist_ui(&mut self, ui: &mut egui::Ui) {

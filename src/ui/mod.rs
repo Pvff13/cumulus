@@ -3,6 +3,7 @@ mod fonts;
 mod home;
 mod icon;
 mod library;
+mod overlay_ui;
 mod player_bar;
 mod queue;
 mod queue_panel;
@@ -179,6 +180,8 @@ pub struct App {
     autoplay: bool,
     /// The last-track id autoplay already fetched for (so it asks once).
     autoplay_for: Option<u64>,
+    /// Now-playing pop-out window settings.
+    overlay_menu: overlay_ui::OverlayMenu,
 
     desktop: Desktop,
     close_to_tray: bool,
@@ -207,6 +210,7 @@ impl App {
         theme::apply(&cc.egui_ctx);
         fonts::install(&cc.egui_ctx);
         let config = Config::load();
+        let overlay_menu = overlay_ui::OverlayMenu::load(&config);
         let api = Arc::new(Api::new(config.client_id));
         let (tx, rx) = channel();
         let player = {
@@ -257,6 +261,7 @@ impl App {
             failures: 0,
             autoplay: config.autoplay,
             autoplay_for: None,
+            overlay_menu,
             desktop,
             close_to_tray: config.close_to_tray,
             hidden: false,
@@ -296,6 +301,9 @@ impl App {
             };
         }
         self.show_queue = std::env::var_os("CUMULUS_DEV_QUEUE").is_some();
+        if std::env::var_os("CUMULUS_DEV_POPOUT").is_some() {
+            self.overlay_menu.popout = true;
+        }
     }
 
     fn spawn(&self, job: impl FnOnce(&Api, &dyn Fn(Msg)) + Send + 'static) {
@@ -962,6 +970,7 @@ impl eframe::App for App {
         if matches!(self.screen, Screen::Taken) {
             self.screen = screen;
         }
+        self.popout(&ctx);
         self.art.end_frame();
     }
 }

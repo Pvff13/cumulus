@@ -1,6 +1,6 @@
 [package]
 name = "cumulus"
-version = "0.2.2"
+version = "0.3.0"
 edition = "2024"
 description = "Lightweight native desktop player for your SoundCloud library (unofficial)"
 license = "MIT"
@@ -9,7 +9,8 @@ publish = false
 
 [dependencies]
 # GUI: immediate-mode, repaints only on input / explicit request, OpenGL backend.
-eframe = { version = "0.37.0", default-features = false, features = ["glow", "default_fonts", "links"] }
+# "clipboard" is needed for copy/paste (Ctrl+C/V, the overlay Copy button).
+eframe = { version = "0.37.0", default-features = false, features = ["glow", "default_fonts", "links", "clipboard"] }
 # Login window only: system WebView2 (already part of Windows 11), runs in a
 # separate short-lived process so its memory is released after sign-in.
 wry = "0.57.0"
@@ -38,7 +39,7 @@ sha2 = "0.11"
 getrandom = "0.3"
 
 [target.'cfg(target_os = "linux")'.dependencies]
-eframe = { version = "0.37.0", default-features = false, features = ["glow", "default_fonts", "links", "x11", "wayland"] }
+eframe = { version = "0.37.0", default-features = false, features = ["glow", "default_fonts", "links", "clipboard", "x11", "wayland"] }
 
 [profile.release]
 opt-level = 3

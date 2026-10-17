@@ -104,6 +104,21 @@ and every track credits its artist and links back to SoundCloud.
   apps may play). After 5 failures in a row (e.g. offline) playback stops
   instead of skipping through the whole list.
 
+## Now-playing pop-out (for streaming)
+
+**⧉ Overlay** (next to ↻ at the top of Home and the lists) → **Show pop-out
+window** opens a small window with the current song's cover, title, artist
+and progress. It keeps updating while Cumulus is minimised or in the tray.
+
+- **Show controls:** previous, play/pause, next and volume on the pop-out.
+- **Always on top:** keep it above other windows.
+- Both are in the ⧉ menu and when you right-click the pop-out. Your choices
+  are remembered, including whether the pop-out was open. It's off until you
+  turn it on.
+- **In OBS:** add a **Window Capture** source and pick
+  `[cumulus.exe]: Cumulus - Now playing`. Turn controls off for a clean card
+  on stream.
+
 ## Queue, search, likes, playlists
 
 - **Queue** (☰ in the player bar): what's playing and what's next. Drag
