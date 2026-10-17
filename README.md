@@ -3,6 +3,8 @@
 A lightweight native desktop player for your SoundCloud library: Rust + egui,
 native audio, no bundled browser. **Unofficial; not affiliated with SoundCloud.**
 
+![Cumulus: the Home view with your mixes, and the player bar](assets/screenshot.png)
+
 ## Install (Windows 10 / 11)
 
 You don't need any programming tools for this.
