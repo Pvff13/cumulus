@@ -21,6 +21,9 @@ pub struct Config {
     pub popout: bool,
     pub popout_on_top: bool,
     pub popout_controls: bool,
+    /// Colours: "dark", "grey" or "light", and an accent name (see ui::theme).
+    pub theme: String,
+    pub accent: String,
     /// Path of the build to update from; defaults to this project's
     /// `target/release/cumulus.exe` (set at compile time).
     pub update_source: Option<String>,
@@ -28,7 +31,7 @@ pub struct Config {
 
 impl Default for Config {
     fn default() -> Self {
-        Self { client_id: None, art_cache_mb: 100, volume: 0.8, close_to_tray: true, autoplay: true, popout: false, popout_on_top: true, popout_controls: true, update_source: None }
+        Self { client_id: None, art_cache_mb: 100, volume: 0.8, close_to_tray: true, autoplay: true, popout: false, popout_on_top: true, popout_controls: true, theme: "dark".into(), accent: "purple".into(), update_source: None }
     }
 }
 

@@ -7,7 +7,7 @@ use eframe::egui::{self, Align, Key, Layout, Modifiers, RichText, Sense, vec2};
 
 use super::queue::Repeat;
 use super::rows::{self, format_duration, link_label};
-use super::theme::{ACCENT, MUTED, SIDEBAR};
+use super::theme::{accent, muted, sidebar};
 use super::App;
 
 pub const HEIGHT: f32 = 84.0;
@@ -96,7 +96,7 @@ impl App {
     pub(super) fn player_bar(&mut self, ui: &mut egui::Ui) {
         let Some(item) = self.queue.current().cloned() else {
             ui.centered_and_justified(|ui| {
-                ui.label(RichText::new("Pick a track to start playing  ·  Space play/pause  ·  ←/→ seek  ·  ↑/↓ volume  ·  / search").color(MUTED));
+                ui.label(RichText::new("Pick a track to start playing  ·  Space play/pause  ·  ←/→ seek  ·  ↑/↓ volume  ·  / search").color(muted()));
             });
             return;
         };
@@ -144,7 +144,7 @@ impl App {
                             });
                         }
                         None => {
-                            ui.label(RichText::new("Loading...").color(MUTED));
+                            ui.label(RichText::new("Loading...").color(muted()));
                         }
                     }
                 });
@@ -195,7 +195,7 @@ impl App {
                 });
                 ui.horizontal(|ui| {
                     let time_w = 52.0;
-                    ui.add_sized([time_w, 18.0], egui::Label::new(RichText::new(format_duration((pos * 1000.0) as u64)).small().color(MUTED)));
+                    ui.add_sized([time_w, 18.0], egui::Label::new(RichText::new(format_duration((pos * 1000.0) as u64)).small().color(muted())));
                     let mut value = self.seek_drag.unwrap_or(pos);
                     ui.spacing_mut().slider_width = (ui.available_width() - time_w - 8.0).max(60.0);
                     let resp = ui.add(
@@ -208,7 +208,7 @@ impl App {
                         self.seek_drag = None;
                         self.seek_to(value);
                     }
-                    ui.label(RichText::new(format_duration((duration * 1000.0) as u64)).small().color(MUTED));
+                    ui.label(RichText::new(format_duration((duration * 1000.0) as u64)).small().color(muted()));
                 });
             });
 
@@ -228,7 +228,7 @@ impl App {
                     self.set_volume(v, true);
                 }
                 let glyph = if self.volume == 0.0 { "🔇" } else { "🔊" };
-                ui.label(RichText::new(glyph).color(MUTED)).on_hover_text("Volume (↑/↓)");
+                ui.label(RichText::new(glyph).color(muted())).on_hover_text("Volume (↑/↓)");
             });
         });
         if let Some(track) = like {
@@ -238,10 +238,10 @@ impl App {
 }
 
 fn icon(ui: &mut egui::Ui, glyph: &str, active: bool, tip: &str) -> egui::Response {
-    let text = RichText::new(glyph).size(16.0).color(if active { ACCENT } else { MUTED });
+    let text = RichText::new(glyph).size(16.0).color(if active { accent() } else { muted() });
     ui.add(egui::Button::new(text).frame(false).min_size(vec2(30.0, 30.0))).on_hover_text(tip)
 }
 
 pub fn bar_frame() -> egui::Frame {
-    egui::Frame::NONE.fill(SIDEBAR).inner_margin(egui::Margin::symmetric(14, 8))
+    egui::Frame::NONE.fill(sidebar()).inner_margin(egui::Margin::symmetric(14, 8))
 }

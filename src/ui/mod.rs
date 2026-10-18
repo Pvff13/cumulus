@@ -31,7 +31,7 @@ pub use desktop::window_icon;
 pub use icon::write_files as write_icon_files;
 use library::{Feed, FeedKind, PlaylistView, RowPage};
 use queue::Queue;
-use theme::{ACCENT, ERROR, MUTED, SIDEBAR};
+use theme::{accent, muted, sidebar};
 
 /// Results coming back from worker threads.
 enum Msg {
@@ -207,9 +207,14 @@ const SEARCH_DEBOUNCE: Duration = Duration::from_millis(400);
 
 impl App {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
-        theme::apply(&cc.egui_ctx);
         fonts::install(&cc.egui_ctx);
         let config = Config::load();
+        theme::set(&cc.egui_ctx, &config.theme, &config.accent);
+        // Debug builds: CUMULUS_DEV_THEME=grey:teal previews colours without saving them.
+        if let Some(spec) = std::env::var("CUMULUS_DEV_THEME").ok().filter(|_| cfg!(debug_assertions)) {
+            let (base, accent) = spec.split_once(':').unwrap_or((&spec, "purple"));
+            theme::set(&cc.egui_ctx, base, accent);
+        }
         let overlay_menu = overlay_ui::OverlayMenu::load(&config);
         let api = Arc::new(Api::new(config.client_id));
         let (tx, rx) = channel();
@@ -770,10 +775,10 @@ impl App {
     fn signed_out_ui(&mut self, ui: &mut egui::Ui, error: Option<&str>) {
         centered(ui, |ui| {
             ui.heading("Cumulus");
-            ui.label(RichText::new("A lightweight player for your SoundCloud library").color(MUTED));
+            ui.label(RichText::new("A lightweight player for your SoundCloud library").color(muted()));
             ui.add_space(18.0);
             if ui
-                .add(egui::Button::new(RichText::new("Sign in with SoundCloud").strong()).fill(ACCENT))
+                .add(egui::Button::new(RichText::new("Sign in with SoundCloud").strong().color(theme::on_accent())).fill(accent()))
                 .clicked()
             {
                 self.start_login();
@@ -781,11 +786,11 @@ impl App {
             ui.label(
                 RichText::new("Opens SoundCloud's own sign-in page in a small window.")
                     .small()
-                    .color(MUTED),
+                    .color(muted()),
             );
             if let Some(e) = error {
                 ui.add_space(8.0);
-                ui.colored_label(ERROR, e);
+                ui.colored_label(theme::error(), e);
             }
             ui.add_space(14.0);
             ui.toggle_value(&mut self.paste_open, "Paste a token instead");
@@ -793,7 +798,7 @@ impl App {
                 ui.label(
                     RichText::new("The value of the oauth_token cookie on soundcloud.com")
                         .small()
-                        .color(MUTED),
+                        .color(muted()),
                 );
                 ui.horizontal(|ui| {
                     ui.add(egui::TextEdit::singleline(&mut self.paste).password(true).desired_width(260.0));
@@ -824,9 +829,9 @@ impl App {
         egui::Panel::left("sidebar")
             .resizable(false)
             .exact_size(200.0)
-            .frame(egui::Frame::NONE.fill(SIDEBAR).inner_margin(12.0))
+            .frame(egui::Frame::NONE.fill(sidebar()).inner_margin(12.0))
             .show(ui, |ui| {
-                ui.label(RichText::new("Cumulus").heading().color(ACCENT));
+                ui.label(RichText::new("Cumulus").heading().color(accent()));
                 ui.add_space(12.0);
                 for nav in Nav::ALL {
                     let selected = self.nav == nav && self.pages.is_empty();
@@ -840,15 +845,15 @@ impl App {
                     ui.label(
                         RichText::new("Unofficial app, not affiliated with SoundCloud.")
                             .small()
-                            .color(MUTED),
+                            .color(muted()),
                     );
                     ui.horizontal(|ui| {
                         ui.spacing_mut().item_spacing.x = 4.0;
-                        ui.label(RichText::new(format!("Cumulus {}", crate::update::current_version())).small().color(MUTED));
+                        ui.label(RichText::new(format!("Cumulus {}", crate::update::current_version())).small().color(muted()));
                         if self.update_ready.is_none() {
-                            ui.label(RichText::new("·").small().color(MUTED));
+                            ui.label(RichText::new("·").small().color(muted()));
                             if self.checking_update {
-                                ui.label(RichText::new("Checking...").small().color(MUTED));
+                                ui.label(RichText::new("Checking...").small().color(muted()));
                             } else if ui.link(RichText::new("Check for updates").small()).clicked() {
                                 self.check_for_update_now();
                             }
@@ -865,7 +870,7 @@ impl App {
                             ready.version.as_deref().map_or("A newer build".to_string(), |v| format!("Cumulus {v}")),
                             crate::update::current_version(),
                         );
-                        let button = egui::Button::new(RichText::new(label).strong()).fill(ACCENT);
+                        let button = egui::Button::new(RichText::new(label).strong().color(theme::on_accent())).fill(accent());
                         if ui.add_sized([176.0, 28.0], button).on_hover_text(tip).clicked()
                         {
                             self.install_update();
@@ -881,6 +886,12 @@ impl App {
                         config.close_to_tray = self.close_to_tray;
                         config.save();
                     }
+                    if let Some((base, accent)) = theme::appearance_menu(ui) {
+                        theme::set(ui.ctx(), base, accent);
+                        let mut config = Config::load();
+                        (config.theme, config.accent) = (base.into(), accent.into());
+                        config.save();
+                    }
                     if ui.small_button("Sign out").clicked() {
                         self.sign_out(None);
                     }
@@ -891,7 +902,7 @@ impl App {
             egui::Panel::right("queue")
                 .resizable(false)
                 .exact_size(330.0)
-                .frame(egui::Frame::NONE.fill(SIDEBAR).inner_margin(12.0))
+                .frame(egui::Frame::NONE.fill(sidebar()).inner_margin(12.0))
                 .show(ui, |ui| self.queue_panel(ui));
         }
         egui::CentralPanel::default()
@@ -906,7 +917,7 @@ impl App {
     fn status_banner(&mut self, ui: &mut egui::Ui) {
         if let Some(s) = &self.status {
             if s.at.elapsed() < Duration::from_secs(6) {
-                ui.colored_label(if s.error { ERROR } else { ACCENT }, &s.text);
+                ui.colored_label(if s.error { theme::error() } else { accent() }, &s.text);
                 ui.ctx().request_repaint_after(Duration::from_secs(1));
             } else {
                 self.status = None;
@@ -917,9 +928,9 @@ impl App {
 
 fn status_line(ui: &mut egui::Ui, error: Option<&str>, refreshing_saved: bool) {
     if let Some(e) = error {
-        ui.colored_label(ERROR, e);
+        ui.colored_label(theme::error(), e);
     } else if refreshing_saved {
-        ui.label(RichText::new("Showing saved copy, refreshing...").small().color(MUTED));
+        ui.label(RichText::new("Showing saved copy, refreshing...").small().color(muted()));
     }
 }
 
@@ -972,18 +983,18 @@ impl eframe::App for App {
         egui::CentralPanel::default().frame(bg).show(ui, |ui| match &screen {
             Screen::Starting | Screen::Taken => centered(ui, |ui| {
                 ui.spinner();
-                ui.label(RichText::new("Connecting...").color(MUTED));
+                ui.label(RichText::new("Connecting...").color(muted()));
             }),
             Screen::SigningIn => centered(ui, |ui| {
                 ui.spinner();
                 ui.label("Finish signing in in the SoundCloud window.");
-                ui.label(RichText::new("It closes by itself once you're signed in.").small().color(MUTED));
+                ui.label(RichText::new("It closes by itself once you're signed in.").small().color(muted()));
             }),
             Screen::SignedOut { error } => self.signed_out_ui(ui, error.as_deref()),
             Screen::Problem(msg) => {
                 let (mut retry, mut out) = (false, false);
                 centered(ui, |ui| {
-                    ui.colored_label(ERROR, msg);
+                    ui.colored_label(theme::error(), msg);
                     ui.horizontal(|ui| {
                         retry = ui.button("Retry").clicked();
                         out = ui.button("Sign out").clicked();

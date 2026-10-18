@@ -122,6 +122,14 @@ and progress. It keeps updating while Cumulus is minimised or in the tray.
   `[cumulus.exe]: Cumulus - Now playing`. Turn controls off for a clean card
   on stream.
 
+## Appearance
+
+**🎨 Appearance** (bottom of the sidebar) picks a **Dark**, **Grey** or
+**Light** theme and one of 12 accent colours (purple, blue, sky, teal, green,
+lime, yellow, orange, red, pink, magenta, silver). Changes apply instantly and
+are remembered. On the light theme, bright accents are darkened a little so
+they stay readable.
+
 ## Queue, search, likes, playlists
 
 - **Queue** (☰ in the player bar): what's playing and what's next. Drag

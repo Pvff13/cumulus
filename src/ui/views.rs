@@ -7,7 +7,7 @@ use eframe::egui::{self, Align, Key, Layout, RichText};
 
 use super::library::{Entry, FeedKind, Row};
 use super::rows::{self, ROW_HEIGHT, RowCtx, TrackAction};
-use super::theme::MUTED;
+use super::theme::muted;
 use super::{App, ArtistInfo, Msg, Nav, Page, status_line};
 use crate::api::models::{Playlist, Track};
 use crate::api::SearchKind;
@@ -64,7 +64,7 @@ impl App {
 
         if feed.rows.is_empty() {
             if !feed.loading && feed.error.is_none() {
-                ui.label(RichText::new(empty).color(MUTED));
+                ui.label(RichText::new(empty).color(muted()));
             }
         } else {
             let cx = RowCtx { art: &self.art, liked: &self.liked, current: self.queue.current_id() };
@@ -160,10 +160,10 @@ impl App {
             ui.vertical(|ui| {
                 // Mixes get a synthetic id with the top bit set (see SystemPlaylist::local_id).
                 let kind = if p.id >= 1 << 63 { "Mix" } else if p.is_album { "Album" } else { "Playlist" };
-                ui.label(RichText::new(kind).small().color(MUTED));
+                ui.label(RichText::new(kind).small().color(muted()));
                 ui.add(egui::Label::new(RichText::new(&p.title).heading()).truncate());
                 rows::link_label(ui, &p.user.username, &p.user.permalink_url);
-                ui.label(RichText::new(format!("{} tracks", p.track_count)).color(MUTED));
+                ui.label(RichText::new(format!("{} tracks", p.track_count)).color(muted()));
                 if !p.permalink_url.is_empty() {
                     ui.hyperlink_to("Open on SoundCloud ↗", &p.permalink_url);
                 }
@@ -237,7 +237,7 @@ impl App {
             let _ = rows::artwork(ui, &self.art, artist.avatar_url.as_deref(), 64.0, "t300x300");
             ui.add_space(8.0);
             ui.vertical(|ui| {
-                ui.label(RichText::new("Artist").small().color(MUTED));
+                ui.label(RichText::new("Artist").small().color(muted()));
                 ui.heading(&artist.username);
                 if !artist.permalink_url.is_empty() {
                     ui.hyperlink_to("Open on SoundCloud ↗", &artist.permalink_url);
@@ -281,7 +281,7 @@ impl App {
         });
         ui.add_space(4.0);
         if self.search_query.is_empty() {
-            ui.label(RichText::new("Type to search SoundCloud.").color(MUTED));
+            ui.label(RichText::new("Type to search SoundCloud.").color(muted()));
             return;
         }
         let kind = FeedKind::Search(self.search_kind);

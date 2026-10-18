@@ -8,7 +8,7 @@ use eframe::egui::{self, Align, Align2, Color32, CursorIcon, FontId, Layout, Ric
 
 use super::library::PlaylistView;
 use super::rows::{self, TrackAction};
-use super::theme::{HOVER, MUTED};
+use super::theme::{hover, muted};
 use super::{App, Msg, Page, status_line};
 use crate::api::models::{HomeItem, Page as ApiPage, Playlist, Selection, SystemPlaylist, Track, TrackLike};
 use crate::api::{Api, ApiError, client};
@@ -231,7 +231,7 @@ fn track_tile(
             .on_hover_text("Play");
         if ui.rect_contains_pointer(img.rect) {
             let center = img.rect.right_bottom() - vec2(24.0, 24.0);
-            ui.painter().rect_filled(img.rect, 4.0, HOVER.gamma_multiply(0.35));
+            ui.painter().rect_filled(img.rect, 4.0, hover().gamma_multiply(0.35));
             ui.painter().circle_filled(center, 18.0, Color32::from_black_alpha(200));
             ui.painter().text(center, Align2::CENTER_CENTER, "▶", FontId::proportional(16.0), Color32::WHITE);
         }
@@ -249,7 +249,7 @@ fn track_tile(
         });
         ui.add_space(4.0);
         ui.add(egui::Label::new(RichText::new(&track.title).strong()).truncate().selectable(false));
-        ui.add(egui::Label::new(RichText::new(&track.user.username).small().color(MUTED)).truncate().selectable(false));
+        ui.add(egui::Label::new(RichText::new(&track.user.username).small().color(muted())).truncate().selectable(false));
     });
     action
 }
@@ -271,7 +271,7 @@ fn tile(ui: &mut egui::Ui, art: &crate::cache::art::ArtCache, item: &HomeItem) -
             && hovered
             && ui.pointer_hover_pos().is_some_and(|p| p.distance(play_center) <= 18.0);
         if hovered {
-            ui.painter().rect_filled(img.rect, 4.0, HOVER.gamma_multiply(0.35));
+            ui.painter().rect_filled(img.rect, 4.0, hover().gamma_multiply(0.35));
             if mix.is_some() {
                 ui.painter().circle_filled(play_center, 18.0, Color32::from_black_alpha(if on_play { 230 } else { 170 }));
                 ui.painter().text(play_center, Align2::CENTER_CENTER, "▶", FontId::proportional(16.0), Color32::WHITE);
@@ -287,7 +287,7 @@ fn tile(ui: &mut egui::Ui, art: &crate::cache::art::ArtCache, item: &HomeItem) -
         }
         ui.add_space(4.0);
         ui.add(egui::Label::new(RichText::new(title).strong()).truncate().selectable(false));
-        ui.add(egui::Label::new(RichText::new(subtitle).small().color(MUTED)).truncate().selectable(false));
+        ui.add(egui::Label::new(RichText::new(subtitle).small().color(muted())).truncate().selectable(false));
     });
     action
 }

@@ -7,7 +7,7 @@ use eframe::egui::{
 
 use std::collections::HashSet;
 
-use super::theme::{ACCENT, HOVER, MUTED, SURFACE, TAG};
+use super::theme::{accent, hover, muted, surface, tag as tag_colour};
 use crate::api::models::{Availability, Playlist, Track, User, sized_art};
 use crate::cache::art::ArtCache;
 
@@ -18,7 +18,7 @@ const ART: f32 = 40.0;
 fn row_frame(ui: &mut egui::Ui) -> (Response, Rect) {
     let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), ROW_HEIGHT), Sense::click());
     if resp.hovered() {
-        ui.painter().rect_filled(rect, 6.0, HOVER);
+        ui.painter().rect_filled(rect, 6.0, hover());
     }
     (resp, rect.shrink2(vec2(10.0, 6.0)))
 }
@@ -28,7 +28,7 @@ pub fn artwork(ui: &mut egui::Ui, art: &ArtCache, url: Option<&str>, size: f32, 
     match url.and_then(|u| art.get(&sized_art(u, variant))) {
         Some(t) => egui::Image::new(&t).corner_radius(4).paint_at(ui, r),
         None => {
-            ui.painter().rect_filled(r, 4.0, SURFACE);
+            ui.painter().rect_filled(r, 4.0, surface());
         }
     }
     resp
@@ -48,15 +48,15 @@ fn play_artwork(ui: &mut egui::Ui, art: &ArtCache, url: Option<&str>, row_hovere
 /// A muted label that opens `url` in the browser when clicked.
 pub fn link_label(ui: &mut egui::Ui, text: &str, url: &str) {
     if url.is_empty() {
-        ui.label(RichText::new(text).color(MUTED));
+        ui.label(RichText::new(text).color(muted()));
         return;
     }
     let resp = ui
-        .add(egui::Label::new(RichText::new(text).color(MUTED)).sense(Sense::click()).truncate())
+        .add(egui::Label::new(RichText::new(text).color(muted())).sense(Sense::click()).truncate())
         .on_hover_cursor(CursorIcon::PointingHand);
     if resp.hovered() {
         let r = resp.rect;
-        ui.painter().hline(r.x_range(), r.bottom(), Stroke::new(1.0, MUTED));
+        ui.painter().hline(r.x_range(), r.bottom(), Stroke::new(1.0, muted()));
     }
     if resp.clicked() {
         ui.ctx().open_url(OpenUrl::new_tab(url));
@@ -69,7 +69,7 @@ fn open_on_soundcloud(ui: &mut egui::Ui, url: &str) {
         return;
     }
     let resp = ui
-        .add(egui::Label::new(RichText::new("↗").color(MUTED).size(15.0)).sense(Sense::click()))
+        .add(egui::Label::new(RichText::new("↗").color(muted()).size(15.0)).sense(Sense::click()))
         .on_hover_cursor(CursorIcon::PointingHand)
         .on_hover_text("Open on SoundCloud");
     if resp.clicked() {
@@ -78,7 +78,7 @@ fn open_on_soundcloud(ui: &mut egui::Ui, url: &str) {
 }
 
 fn tag(ui: &mut egui::Ui, text: &str) {
-    ui.label(RichText::new(text).small().color(TAG));
+    ui.label(RichText::new(text).small().color(tag_colour()));
 }
 
 pub fn format_duration(ms: u64) -> String {
@@ -131,7 +131,7 @@ pub fn track_row(ui: &mut egui::Ui, cx: &RowCtx<'_>, track: &Track, note: Option
     let ui = &mut child;
     open_on_soundcloud(ui, &track.permalink_url);
     ui.add_space(6.0);
-    ui.label(RichText::new(format_duration(track.duration)).color(MUTED).monospace());
+    ui.label(RichText::new(format_duration(track.duration)).color(muted()).monospace());
     ui.add_space(4.0);
     if (hovered || liked) && heart(ui, liked).clicked() {
         action = Some(TrackAction::LikeOnSoundCloud);
@@ -140,7 +140,7 @@ pub fn track_row(ui: &mut egui::Ui, cx: &RowCtx<'_>, track: &Track, note: Option
         Availability::Blocked => tag(ui, "Not available"),
         Availability::Preview => tag(ui, "Preview"),
         Availability::Drm => {
-            ui.label(RichText::new("DRM").small().color(TAG))
+            ui.label(RichText::new("DRM").small().color(tag_colour()))
                 .on_hover_text("Protected by SoundCloud: it only plays on soundcloud.com or SoundCloud's apps. Click to open it there.");
         }
         Availability::Playable => {}
@@ -155,12 +155,12 @@ pub fn track_row(ui: &mut egui::Ui, cx: &RowCtx<'_>, track: &Track, note: Option
             ui.add_space(1.0);
             let mut title = RichText::new(&track.title).strong();
             if cx.current == Some(track.id) {
-                title = title.color(ACCENT);
+                title = title.color(accent());
             }
             if availability == Availability::Blocked {
-                title = title.color(MUTED).strikethrough();
+                title = title.color(muted()).strikethrough();
             } else if availability == Availability::Drm {
-                title = title.color(MUTED);
+                title = title.color(muted());
             }
             ui.add(egui::Label::new(title).truncate().selectable(false));
             ui.horizontal(|ui| {
@@ -169,7 +169,7 @@ pub fn track_row(ui: &mut egui::Ui, cx: &RowCtx<'_>, track: &Track, note: Option
                     action = Some(TrackAction::OpenArtist);
                 }
                 if let Some(n) = note {
-                    ui.label(RichText::new(format!("· {n}")).color(MUTED).small());
+                    ui.label(RichText::new(format!("· {n}")).color(muted()).small());
                 }
             });
         });
@@ -209,9 +209,9 @@ pub fn track_menu(ui: &mut egui::Ui, track: &Track, liked: bool) -> Option<Track
 /// ♥ (liked) / ♡. Clicking opens the track on SoundCloud to (un)like it there.
 pub fn heart(ui: &mut egui::Ui, liked: bool) -> Response {
     let (glyph, color, tip) = if liked {
-        ("♥", ACCENT, "Liked. Opens SoundCloud to unlike")
+        ("♥", accent(), "Liked. Opens SoundCloud to unlike")
     } else {
-        ("♡", MUTED, "Opens SoundCloud to like")
+        ("♡", muted(), "Opens SoundCloud to like")
     };
     ui.add(egui::Label::new(RichText::new(glyph).color(color).size(16.0)).sense(Sense::click()))
         .on_hover_cursor(CursorIcon::PointingHand)
@@ -221,11 +221,11 @@ pub fn heart(ui: &mut egui::Ui, liked: bool) -> Response {
 /// A muted label that underlines on hover; returns true when clicked.
 fn clickable_label(ui: &mut egui::Ui, text: &str, tip: &str) -> bool {
     let resp = ui
-        .add(egui::Label::new(RichText::new(text).color(MUTED)).sense(Sense::click()).truncate())
+        .add(egui::Label::new(RichText::new(text).color(muted())).sense(Sense::click()).truncate())
         .on_hover_cursor(CursorIcon::PointingHand)
         .on_hover_text(tip);
     if resp.hovered() {
-        ui.painter().hline(resp.rect.x_range(), resp.rect.bottom(), Stroke::new(1.0, MUTED));
+        ui.painter().hline(resp.rect.x_range(), resp.rect.bottom(), Stroke::new(1.0, muted()));
     }
     resp.clicked()
 }
@@ -245,7 +245,7 @@ pub fn user_row(ui: &mut egui::Ui, art: &ArtCache, user: &User) -> bool {
     if let Some(n) = user.track_count {
         stats.push(format!("{n} tracks"));
     }
-    ui.label(RichText::new(stats.join(" · ")).color(MUTED));
+    ui.label(RichText::new(stats.join(" · ")).color(muted()));
     ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
         let _ = artwork(ui, art, user.avatar_url.as_deref(), ART, "t67x67");
         ui.add_space(4.0);
@@ -270,7 +270,7 @@ pub fn playlist_row(ui: &mut egui::Ui, art: &ArtCache, playlist: &Playlist, note
     let ui = &mut child;
     open_on_soundcloud(ui, &playlist.permalink_url);
     ui.add_space(6.0);
-    ui.label(RichText::new(format!("{} tracks", playlist.track_count)).color(MUTED));
+    ui.label(RichText::new(format!("{} tracks", playlist.track_count)).color(muted()));
     if playlist.is_album {
         tag(ui, "Album");
     }
@@ -284,7 +284,7 @@ pub fn playlist_row(ui: &mut egui::Ui, art: &ArtCache, playlist: &Playlist, note
                 ui.spacing_mut().item_spacing.x = 4.0;
                 link_label(ui, &playlist.user.username, &playlist.user.permalink_url);
                 if let Some(n) = note {
-                    ui.label(RichText::new(format!("· {n}")).color(MUTED).small());
+                    ui.label(RichText::new(format!("· {n}")).color(muted()).small());
                 }
             });
         });
@@ -297,9 +297,9 @@ pub fn pending_row(ui: &mut egui::Ui, label: &str) {
     let (_, inner) = row_frame(ui);
     let mut child = ui.new_child(UiBuilder::new().max_rect(inner).layout(Layout::left_to_right(Align::Center)));
     let (r, _) = child.allocate_exact_size(vec2(ART, ART), Sense::hover());
-    child.painter().rect_filled(r, 4.0, SURFACE);
+    child.painter().rect_filled(r, 4.0, surface());
     child.add_space(4.0);
-    child.label(RichText::new(label).color(MUTED));
+    child.label(RichText::new(label).color(muted()));
 }
 
 #[cfg(test)]

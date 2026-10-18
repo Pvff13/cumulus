@@ -6,12 +6,12 @@
 use std::time::Duration;
 
 use eframe::egui::{
-    self, Align, Color32, CornerRadius, Layout, RichText, Sense, ViewportBuilder, ViewportId, WindowLevel, vec2,
+    self, Align, CornerRadius, Layout, RichText, Sense, ViewportBuilder, ViewportId, WindowLevel, vec2,
 };
 
 use super::App;
 use super::rows;
-use super::theme::{ACCENT, BG, MUTED};
+use super::theme::{accent, bg, muted};
 use crate::config::Config;
 
 /// What the pop-out shows.
@@ -70,13 +70,13 @@ fn toggles(ui: &mut egui::Ui, menu: &mut OverlayMenu) -> bool {
 /// can sit in headers that are drawn while other app state is borrowed.
 pub fn overlay_menu(ui: &mut egui::Ui, menu: &mut OverlayMenu) -> MenuResult {
     let mut out = MenuResult::default();
-    let label = RichText::new("⧉ Overlay").color(if menu.popout { ACCENT } else { ui.visuals().text_color() });
+    let label = RichText::new("⧉ Overlay").color(if menu.popout { accent() } else { ui.visuals().text_color() });
     // Stays open while ticking options; closes on a click outside it.
     let stay_open = egui::containers::menu::MenuConfig::new().close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside);
     egui::containers::menu::MenuButton::new(label).config(stay_open).ui(ui, |ui| {
         ui.set_min_width(270.0);
         ui.label(RichText::new("Now-playing pop-out").strong());
-        ui.label(RichText::new("A small window with the current song's cover, title and artist.").small().color(MUTED));
+        ui.label(RichText::new("A small window with the current song's cover, title and artist.").small().color(muted()));
         ui.add_space(6.0);
         out.changed |= ui.checkbox(&mut menu.popout, "Show pop-out window").changed();
         ui.add_enabled_ui(menu.popout, |ui| {
@@ -89,7 +89,7 @@ pub fn overlay_menu(ui: &mut egui::Ui, menu: &mut OverlayMenu) -> MenuResult {
                  Right-click the pop-out for these options too.",
             )
             .small()
-            .color(MUTED),
+            .color(muted()),
         );
     });
     out
@@ -143,7 +143,7 @@ impl App {
             if ui.ctx().input(|i| i.viewport().close_requested()) {
                 closed = true;
             }
-            egui::CentralPanel::default().frame(egui::Frame::NONE.fill(BG).inner_margin(12.0)).show(ui, |ui| {
+            egui::CentralPanel::default().frame(egui::Frame::NONE.fill(bg()).inner_margin(12.0)).show(ui, |ui| {
                 // Right-click anywhere on the pop-out for its options.
                 let bg = ui.interact(ui.max_rect(), ui.scope_id().with("popout-bg"), Sense::click());
                 egui::Popup::context_menu(&bg).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).show(|ui| {
@@ -204,16 +204,16 @@ fn now_playing_card(
     let text_rect = egui::Rect::from_min_max(full.min, egui::pos2(full.right() - controls_w, full.bottom()));
     let mut left = ui.new_child(egui::UiBuilder::new().max_rect(text_rect).layout(Layout::left_to_right(Align::Center)));
     if np.track_id == 0 {
-        left.label(RichText::new("Nothing playing").color(MUTED));
+        left.label(RichText::new("Nothing playing").color(muted()));
     } else {
         let _ = rows::artwork(&mut left, art, np.artwork.as_deref(), size, "t300x300");
         left.add_space(6.0);
         left.vertical(|ui| {
             ui.add_space((size - 44.0).max(0.0) / 2.0);
-            ui.add(egui::Label::new(RichText::new(&np.title).strong().size(17.0).color(Color32::WHITE)).truncate());
-            ui.add(egui::Label::new(RichText::new(&np.artist).size(14.0).color(MUTED)).truncate());
+            ui.add(egui::Label::new(RichText::new(&np.title).strong().size(17.0).color(super::theme::text())).truncate());
+            ui.add(egui::Label::new(RichText::new(&np.artist).size(14.0).color(muted())).truncate());
             if !np.playing {
-                ui.label(RichText::new("Paused").small().color(MUTED));
+                ui.label(RichText::new("Paused").small().color(muted()));
             }
         });
     }
@@ -225,7 +225,7 @@ fn now_playing_card(
             ui.spacing_mut().item_spacing.x = 2.0;
             ui.add_space(((CONTROLS_W - 3.0 * 34.0) / 2.0).max(0.0));
             let button = |ui: &mut egui::Ui, glyph: &str, tip: &str, big: bool| {
-                let text = RichText::new(glyph).size(if big { 22.0 } else { 17.0 }).color(Color32::WHITE);
+                let text = RichText::new(glyph).size(if big { 22.0 } else { 17.0 }).color(super::theme::text());
                 ui.add(egui::Button::new(text).frame(false).min_size(vec2(32.0, 30.0))).on_hover_text(tip).clicked()
             };
             if button(ui, "⏮", "Previous", false) {
@@ -241,7 +241,7 @@ fn now_playing_card(
         });
         right.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 4.0;
-            ui.label(RichText::new(if *volume == 0.0 { "🔇" } else { "🔊" }).color(MUTED));
+            ui.label(RichText::new(if *volume == 0.0 { "🔇" } else { "🔊" }).color(muted()));
             ui.spacing_mut().slider_width = CONTROLS_W - 34.0;
             let r = ui.add(egui::Slider::new(volume, 0.0..=1.0).show_value(false).trailing_fill(true));
             if r.changed() || r.drag_stopped() {
@@ -252,7 +252,7 @@ fn now_playing_card(
     if np.track_id != 0 && np.duration > 0.0 {
         let frac = (np.position / np.duration).clamp(0.0, 1.0) as f32;
         let bar = egui::Rect::from_min_size(egui::pos2(full.left(), full.bottom() + 9.0), vec2(full.width() * frac, 3.0));
-        ui.painter().rect_filled(bar, CornerRadius::same(1), ACCENT);
+        ui.painter().rect_filled(bar, CornerRadius::same(1), accent());
     }
     action
 }

@@ -1,25 +1,209 @@
+//! Colours. The theme (dark / grey / light) and accent colour can be changed
+//! while running, so colours are read through functions, not constants.
+
+use std::sync::RwLock;
+
 use eframe::egui::{self, Color32, CornerRadius, FontId, Stroke, TextStyle, Theme};
 
-pub const ACCENT: Color32 = Color32::from_rgb(0x8b, 0x6c, 0xff);
-pub const BG: Color32 = Color32::from_rgb(0x12, 0x12, 0x15);
-pub const SIDEBAR: Color32 = Color32::from_rgb(0x0b, 0x0b, 0x0d);
-pub const SURFACE: Color32 = Color32::from_rgb(0x1c, 0x1c, 0x21);
-pub const TEXT: Color32 = Color32::from_rgb(0xe8, 0xe8, 0xec);
-pub const MUTED: Color32 = Color32::from_rgb(0x9a, 0x9a, 0xa6);
-pub const ERROR: Color32 = Color32::from_rgb(0xff, 0x6b, 0x6b);
-pub const HOVER: Color32 = Color32::from_rgb(0x22, 0x22, 0x28);
-pub const TAG: Color32 = Color32::from_rgb(0xc9, 0xa2, 0x5a);
+/// Background shades.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Base {
+    Dark,
+    Grey,
+    Light,
+}
+
+impl Base {
+    pub const ALL: [Base; 3] = [Base::Dark, Base::Grey, Base::Light];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Base::Dark => "Dark",
+            Base::Grey => "Grey",
+            Base::Light => "Light",
+        }
+    }
+
+    /// Name stored in config.json.
+    pub fn key(self) -> &'static str {
+        match self {
+            Base::Dark => "dark",
+            Base::Grey => "grey",
+            Base::Light => "light",
+        }
+    }
+
+    pub fn from_key(key: &str) -> Base {
+        Base::ALL.into_iter().find(|b| b.key() == key).unwrap_or(Base::Dark)
+    }
+}
+
+/// Accent colours to pick from: (config name, label, colour).
+pub const ACCENTS: [(&str, &str, Color32); 12] = [
+    ("purple", "Purple", Color32::from_rgb(0x8b, 0x6c, 0xff)),
+    ("blue", "Blue", Color32::from_rgb(0x4c, 0x8d, 0xff)),
+    ("sky", "Sky", Color32::from_rgb(0x38, 0xbd, 0xf8)),
+    ("teal", "Teal", Color32::from_rgb(0x2d, 0xd4, 0xbf)),
+    ("green", "Green", Color32::from_rgb(0x4a, 0xde, 0x80)),
+    ("lime", "Lime", Color32::from_rgb(0xa3, 0xe6, 0x35)),
+    ("yellow", "Yellow", Color32::from_rgb(0xfa, 0xcc, 0x15)),
+    ("orange", "Orange", Color32::from_rgb(0xff, 0x77, 0x22)),
+    ("red", "Red", Color32::from_rgb(0xf4, 0x3f, 0x5e)),
+    ("pink", "Pink", Color32::from_rgb(0xf4, 0x72, 0xb6)),
+    ("magenta", "Magenta", Color32::from_rgb(0xd9, 0x46, 0xef)),
+    ("silver", "Silver", Color32::from_rgb(0xb4, 0xb8, 0xc4)),
+];
+
+#[derive(Clone, Copy)]
+struct Palette {
+    base: Base,
+    accent_key: &'static str,
+    accent: Color32,
+    bg: Color32,
+    sidebar: Color32,
+    surface: Color32,
+    extreme: Color32,
+    text: Color32,
+    muted: Color32,
+    error: Color32,
+    hover: Color32,
+    tag: Color32,
+}
+
+const DARK: Palette = Palette {
+    base: Base::Dark,
+    accent_key: "purple",
+    accent: ACCENTS[0].2,
+    bg: Color32::from_rgb(0x12, 0x12, 0x15),
+    sidebar: Color32::from_rgb(0x0b, 0x0b, 0x0d),
+    surface: Color32::from_rgb(0x1c, 0x1c, 0x21),
+    extreme: Color32::from_rgb(0x0e, 0x0e, 0x11),
+    text: Color32::from_rgb(0xe8, 0xe8, 0xec),
+    muted: Color32::from_rgb(0x9a, 0x9a, 0xa6),
+    error: Color32::from_rgb(0xff, 0x6b, 0x6b),
+    hover: Color32::from_rgb(0x22, 0x22, 0x28),
+    tag: Color32::from_rgb(0xc9, 0xa2, 0x5a),
+};
+
+const GREY: Palette = Palette {
+    base: Base::Grey,
+    bg: Color32::from_rgb(0x2b, 0x2c, 0x31),
+    sidebar: Color32::from_rgb(0x22, 0x23, 0x27),
+    surface: Color32::from_rgb(0x38, 0x39, 0x3f),
+    extreme: Color32::from_rgb(0x1e, 0x1f, 0x22),
+    text: Color32::from_rgb(0xee, 0xee, 0xf2),
+    muted: Color32::from_rgb(0xa8, 0xa9, 0xb3),
+    error: Color32::from_rgb(0xff, 0x7b, 0x7b),
+    hover: Color32::from_rgb(0x3e, 0x3f, 0x46),
+    tag: Color32::from_rgb(0xd8, 0xb4, 0x6c),
+    ..DARK
+};
+
+const LIGHT: Palette = Palette {
+    base: Base::Light,
+    bg: Color32::from_rgb(0xf7, 0xf7, 0xf9),
+    sidebar: Color32::from_rgb(0xea, 0xea, 0xef),
+    surface: Color32::from_rgb(0xe2, 0xe2, 0xe8),
+    extreme: Color32::from_rgb(0xff, 0xff, 0xff),
+    text: Color32::from_rgb(0x1b, 0x1b, 0x21),
+    muted: Color32::from_rgb(0x66, 0x66, 0x73),
+    error: Color32::from_rgb(0xc8, 0x2e, 0x2e),
+    hover: Color32::from_rgb(0xe6, 0xe6, 0xec),
+    tag: Color32::from_rgb(0x95, 0x64, 0x0c),
+    ..DARK
+};
+
+static PALETTE: RwLock<Palette> = RwLock::new(DARK);
+
+fn get() -> Palette {
+    *PALETTE.read().unwrap_or_else(|e| e.into_inner())
+}
+
+pub fn accent() -> Color32 {
+    get().accent
+}
+pub fn bg() -> Color32 {
+    get().bg
+}
+pub fn sidebar() -> Color32 {
+    get().sidebar
+}
+pub fn surface() -> Color32 {
+    get().surface
+}
+pub fn text() -> Color32 {
+    get().text
+}
+pub fn muted() -> Color32 {
+    get().muted
+}
+pub fn error() -> Color32 {
+    get().error
+}
+pub fn hover() -> Color32 {
+    get().hover
+}
+pub fn tag() -> Color32 {
+    get().tag
+}
+pub fn base() -> Base {
+    get().base
+}
+pub fn accent_key() -> &'static str {
+    get().accent_key
+}
+
+/// Text colour that reads on top of an accent-filled button.
+pub fn on_accent() -> Color32 {
+    if luminance(accent()) > 0.45 { Color32::from_rgb(0x14, 0x14, 0x18) } else { Color32::WHITE }
+}
+
+/// Relative luminance (0 = black, 1 = white).
+fn luminance(c: Color32) -> f32 {
+    let lin = |v: u8| {
+        let v = v as f32 / 255.0;
+        if v <= 0.04045 { v / 12.92 } else { ((v + 0.055) / 1.055).powf(2.4) }
+    };
+    0.2126 * lin(c.r()) + 0.7152 * lin(c.g()) + 0.0722 * lin(c.b())
+}
+
+/// On the light theme bright accents (yellow, lime...) are darkened until
+/// they're readable as text on the pale background.
+fn readable_on_light(mut c: Color32) -> Color32 {
+    while luminance(c) > 0.28 {
+        let f = |v: u8| (v as f32 * 0.9) as u8;
+        c = Color32::from_rgb(f(c.r()), f(c.g()), f(c.b()));
+    }
+    c
+}
+
+/// Switches theme and accent (unknown names fall back to dark / purple).
+pub fn set(ctx: &egui::Context, base: &str, accent: &str) {
+    let base = Base::from_key(base);
+    let (accent_key, _, colour) = ACCENTS.iter().copied().find(|(k, ..)| *k == accent).unwrap_or(ACCENTS[0]);
+    let mut p = match base {
+        Base::Dark => DARK,
+        Base::Grey => GREY,
+        Base::Light => LIGHT,
+    };
+    p.accent_key = accent_key;
+    p.accent = if base == Base::Light { readable_on_light(colour) } else { colour };
+    *PALETTE.write().unwrap_or_else(|e| e.into_inner()) = p;
+    apply(ctx);
+}
 
 pub fn apply(ctx: &egui::Context) {
-    let mut v = egui::Visuals::dark();
-    v.panel_fill = BG;
-    v.window_fill = SURFACE;
-    v.extreme_bg_color = Color32::from_rgb(0x0e, 0x0e, 0x11);
-    v.faint_bg_color = SURFACE;
-    v.override_text_color = Some(TEXT);
-    v.hyperlink_color = ACCENT;
-    v.selection.bg_fill = ACCENT.linear_multiply(0.45);
-    v.selection.stroke = Stroke::new(1.0, ACCENT);
+    let p = get();
+    let light = p.base == Base::Light;
+    let mut v = if light { egui::Visuals::light() } else { egui::Visuals::dark() };
+    v.panel_fill = p.bg;
+    v.window_fill = if light { p.extreme } else { p.surface };
+    v.extreme_bg_color = p.extreme;
+    v.faint_bg_color = p.surface;
+    v.override_text_color = Some(p.text);
+    v.hyperlink_color = p.accent;
+    v.selection.bg_fill = p.accent.linear_multiply(if light { 0.3 } else { 0.45 });
+    v.selection.stroke = Stroke::new(1.0, p.accent);
     v.window_corner_radius = CornerRadius::same(8);
     for w in [
         &mut v.widgets.inactive,
@@ -29,10 +213,12 @@ pub fn apply(ctx: &egui::Context) {
     ] {
         w.corner_radius = CornerRadius::same(6);
     }
-    v.widgets.inactive.weak_bg_fill = SURFACE;
-    v.widgets.inactive.bg_fill = SURFACE;
-    ctx.set_visuals_of(Theme::Dark, v);
-    ctx.set_theme(Theme::Dark);
+    v.widgets.inactive.weak_bg_fill = p.surface;
+    v.widgets.inactive.bg_fill = p.surface;
+    // One set of visuals for whichever theme egui thinks it's in.
+    ctx.set_visuals_of(Theme::Dark, v.clone());
+    ctx.set_visuals_of(Theme::Light, v);
+    ctx.set_theme(if light { Theme::Light } else { Theme::Dark });
 
     ctx.all_styles_mut(|style| {
         style.text_styles.insert(TextStyle::Body, FontId::proportional(14.5));
@@ -42,4 +228,69 @@ pub fn apply(ctx: &egui::Context) {
         style.spacing.item_spacing = egui::vec2(8.0, 6.0);
         style.spacing.button_padding = egui::vec2(12.0, 6.0);
     });
+    ctx.request_repaint();
+}
+
+/// The "Appearance" button and its menu. Returns the new (theme, accent)
+/// names when one is picked.
+pub fn appearance_menu(ui: &mut egui::Ui) -> Option<(&'static str, &'static str)> {
+    let mut picked = None;
+    let (current_base, current_accent) = (base(), accent_key());
+    let stay_open = egui::containers::menu::MenuConfig::new().close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside);
+    let button = egui::containers::menu::MenuButton::new(egui::RichText::new("🎨 Appearance").small());
+    button.config(stay_open).ui(ui, |ui| {
+        ui.set_min_width(236.0);
+        ui.label(egui::RichText::new("Theme").strong());
+        ui.horizontal(|ui| {
+            for b in Base::ALL {
+                if ui.selectable_label(b == current_base, b.label()).clicked() {
+                    picked = Some((b.key(), current_accent));
+                }
+            }
+        });
+        ui.add_space(6.0);
+        ui.label(egui::RichText::new("Accent colour").strong());
+        ui.add_space(2.0);
+        let light = current_base == Base::Light;
+        for row in ACCENTS.chunks(6) {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 6.0;
+                for &(key, label, colour) in row {
+                    let colour = if light { readable_on_light(colour) } else { colour };
+                    let (rect, resp) = ui.allocate_exact_size(egui::vec2(30.0, 30.0), egui::Sense::click());
+                    let painter = ui.painter();
+                    if key == current_accent {
+                        painter.circle_stroke(rect.center(), 14.0, Stroke::new(2.0, text()));
+                    } else if resp.hovered() {
+                        painter.circle_stroke(rect.center(), 14.0, Stroke::new(1.0, muted()));
+                    }
+                    painter.circle_filled(rect.center(), 11.0, colour);
+                    if resp.on_hover_text(label).clicked() {
+                        picked = Some((current_base.key(), key));
+                    }
+                }
+            });
+        }
+    });
+    picked
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn light_accents_are_readable() {
+        for (_, name, c) in ACCENTS {
+            assert!(luminance(readable_on_light(c)) <= 0.28, "{name}");
+        }
+        // Already-dark colours are left alone.
+        assert_eq!(readable_on_light(Color32::from_rgb(0x30, 0x30, 0x90)), Color32::from_rgb(0x30, 0x30, 0x90));
+    }
+
+    #[test]
+    fn unknown_names_fall_back() {
+        assert_eq!(Base::from_key("neon"), Base::Dark);
+        assert_eq!(Base::from_key("grey"), Base::Grey);
+    }
 }
