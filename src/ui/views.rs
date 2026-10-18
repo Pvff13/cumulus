@@ -322,6 +322,24 @@ impl App {
                 self.ctx.open_url(egui::OpenUrl::new_tab(&track.permalink_url));
                 self.info(format!("“{title}” is DRM-protected, so it only plays on SoundCloud. Opened it in your browser."));
             }
+            TrackAction::Download => match track.download() {
+                Some(crate::api::models::Download::File) => {
+                    if !self.downloading.insert(track.id) {
+                        return;
+                    }
+                    self.info(format!("Downloading “{title}”…"));
+                    let id = track.id;
+                    self.spawn(move |api, send| {
+                        let result = crate::download::save(api, &track);
+                        send(Msg::Downloaded { id, title, result });
+                    });
+                }
+                Some(crate::api::models::Download::Link { url, label }) => {
+                    self.ctx.open_url(egui::OpenUrl::new_tab(url));
+                    self.info(format!("Opened the artist's “{label}” link for “{title}” in your browser"));
+                }
+                None => {}
+            },
             TrackAction::OpenArtist => self.open_artist(ArtistInfo {
                 id: track.user.id,
                 username: track.user.username.clone(),

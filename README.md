@@ -43,8 +43,9 @@ This is against SoundCloud's API terms. It works for personal use, but
 SoundCloud can change it at any time or act on accounts that use it. All of
 that code lives in `src/api/` so changes stay contained.
 
-Cumulus still keeps to the rules that matter: streaming only (no downloads or
-audio written to disk), no attempt to play blocked/preview-only/DRM tracks,
+Cumulus still keeps to the rules that matter: streams are never saved or
+ripped (the only downloads are files artists choose to offer), no attempt to
+play blocked/preview-only/DRM tracks,
 and every track credits its artist and links back to SoundCloud.
 
 ## Sign-in
@@ -106,6 +107,11 @@ and every track credits its artist and links back to SoundCloud.
   plays. Queues skip them straight away without trying, so a mix with a few
   of them just plays past. After 5 failures in a row (e.g. offline) playback stops
   instead of skipping through the whole list.
+- **Downloads:** every track shows a **⬇**. It's in the accent colour when the
+  artist offers a download. Click it to save SoundCloud's original file to your
+  Downloads folder, or to open the artist's own "free download"/buy link
+  (Hypeddit, Bandcamp...). A faint ⬇ means the artist doesn't offer one;
+  clicking it opens the track on SoundCloud. Also in the right-click menu.
 
 ## Now-playing pop-out (for streaming)
 

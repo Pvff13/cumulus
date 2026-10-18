@@ -53,6 +53,8 @@ enum Msg {
     UpdateReady(crate::update::Ready),
     /// Result of pressing "Check for updates".
     UpdateChecked(crate::update::Outcome),
+    /// An artist-offered download finished (or failed).
+    Downloaded { id: u64, title: String, result: Result<std::path::PathBuf, String> },
 }
 
 enum Screen {
@@ -185,6 +187,8 @@ pub struct App {
 
     desktop: Desktop,
     close_to_tray: bool,
+    /// Tracks being downloaded right now.
+    downloading: HashSet<u64>,
     /// Window hidden to the tray.
     hidden: bool,
     /// Quit was chosen: let the next close request through.
@@ -269,6 +273,7 @@ impl App {
             overlay_menu,
             desktop,
             close_to_tray: config.close_to_tray,
+            downloading: HashSet::new(),
             hidden: false,
             quitting: false,
             update_checker: Arc::default(),
@@ -568,6 +573,13 @@ impl App {
                 }
             }
             Msg::Autoplay { after, result } => self.autoplay_loaded(after, result),
+            Msg::Downloaded { id, title, result } => {
+                self.downloading.remove(&id);
+                match result {
+                    Ok(path) => self.info(format!("Saved “{title}” to {}", path.display())),
+                    Err(e) => self.error(format!("Couldn't download “{title}”: {e}")),
+                }
+            }
         }
     }
 

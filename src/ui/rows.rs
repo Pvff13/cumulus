@@ -8,7 +8,7 @@ use eframe::egui::{
 use std::collections::HashSet;
 
 use super::theme::{accent, hover, muted, surface, tag as tag_colour};
-use crate::api::models::{Availability, Playlist, Track, User, sized_art};
+use crate::api::models::{Availability, Download, Playlist, Track, User, sized_art};
 use crate::cache::art::ArtCache;
 
 pub const ROW_HEIGHT: f32 = 52.0;
@@ -111,6 +111,8 @@ pub enum TrackAction {
     OpenArtist,
     /// Play a DRM-only track where it can play: on soundcloud.com.
     OpenOnSoundCloud,
+    /// Get the file the artist offers (or open their download link).
+    Download,
 }
 
 /// A track row: ▶ on the artwork (or double-click) plays, the heart opens
@@ -130,7 +132,10 @@ pub fn track_row(ui: &mut egui::Ui, cx: &RowCtx<'_>, track: &Track, note: Option
     let mut child = ui.new_child(UiBuilder::new().max_rect(inner).layout(Layout::right_to_left(Align::Center)));
     let ui = &mut child;
     open_on_soundcloud(ui, &track.permalink_url);
-    ui.add_space(6.0);
+    if download_button(ui, track) {
+        action = Some(TrackAction::Download);
+    }
+    ui.add_space(4.0);
     ui.label(RichText::new(format_duration(track.duration)).color(muted()).monospace());
     ui.add_space(4.0);
     if (hovered || liked) && heart(ui, liked).clicked() {
@@ -181,6 +186,40 @@ pub fn track_row(ui: &mut egui::Ui, cx: &RowCtx<'_>, track: &Track, note: Option
     action
 }
 
+/// ⬇ on every track: in the accent colour when the artist offers a
+/// download, faint when they don't (that one just opens the track on
+/// SoundCloud). Returns true when an offered download is clicked.
+fn download_button(ui: &mut egui::Ui, track: &Track) -> bool {
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(22.0, 22.0), Sense::click());
+    let offer = track.download();
+    let color = match (&offer, resp.hovered()) {
+        (Some(_), true) => accent().gamma_multiply(1.25),
+        (Some(_), false) => accent(),
+        (None, true) => muted(),
+        (None, false) => muted().gamma_multiply(0.35),
+    };
+    let size = if offer.is_some() { 18.0 } else { 15.0 };
+    ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, "⬇", egui::FontId::proportional(size), color);
+    let tip = match offer {
+        Some(Download::File) => "Download: the artist offers this file on SoundCloud".to_string(),
+        Some(Download::Link { url, label }) => format!("{label}: opens the artist's link ({})", host(url)),
+        None => "The artist doesn't offer a download for this track. Click to open it on SoundCloud.".to_string(),
+    };
+    let clicked = resp.on_hover_cursor(CursorIcon::PointingHand).on_hover_text(tip).clicked();
+    if clicked && offer.is_none() && !track.permalink_url.is_empty() {
+        ui.ctx().open_url(OpenUrl::new_tab(&track.permalink_url));
+        return false;
+    }
+    clicked && offer.is_some()
+}
+
+/// `https://www.hypeddit.com/x` -> `hypeddit.com`.
+pub fn host(url: &str) -> &str {
+    let rest = url.split_once("://").map_or(url, |(_, r)| r);
+    let host = rest.split(['/', '?', '#']).next().unwrap_or(rest);
+    host.strip_prefix("www.").unwrap_or(host)
+}
+
 /// Right-click menu for a track.
 pub fn track_menu(ui: &mut egui::Ui, track: &Track, liked: bool) -> Option<TrackAction> {
     let mut action = None;
@@ -197,6 +236,11 @@ pub fn track_menu(ui: &mut egui::Ui, track: &Track, liked: bool) -> Option<Track
     let like = if liked { "♥  Unlike on SoundCloud ↗" } else { "♡  Like on SoundCloud ↗" };
     item(ui, like, TrackAction::LikeOnSoundCloud);
     item(ui, "Add to playlist on SoundCloud ↗", TrackAction::AddToPlaylistOnSoundCloud);
+    match track.download() {
+        Some(Download::File) => item(ui, "⬇  Download", TrackAction::Download),
+        Some(Download::Link { label, .. }) => item(ui, &format!("⬇  {label} ↗"), TrackAction::Download),
+        None => {}
+    }
     ui.separator();
     item(ui, &format!("Go to {}", track.user.username), TrackAction::OpenArtist);
     if ui.button("Open on SoundCloud ↗").clicked() {

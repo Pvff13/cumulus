@@ -128,6 +128,31 @@ impl Agent {
         Ok((resp.into_body().into_reader(), total))
     }
 
+    /// Streaming GET of a whole file with no overall time limit (artist
+    /// downloads can be large WAVs). Also returns the server's file name.
+    pub fn get_file(&self, url: &str) -> Result<(ureq::BodyReader<'static>, Option<String>), ApiError> {
+        let resp = self
+            .0
+            .get(url)
+            .config()
+            .timeout_global(None)
+            .build()
+            .call()
+            .map_err(|e| ApiError::Offline(e.to_string()))?;
+        match resp.status().as_u16() {
+            200..=299 => {}
+            403 => return Err(ApiError::Forbidden),
+            404 => return Err(ApiError::NotFound),
+            code => return Err(ApiError::Http(code)),
+        }
+        let name = resp
+            .headers()
+            .get("content-disposition")
+            .and_then(|v| v.to_str().ok())
+            .and_then(disposition_filename);
+        Ok((resp.into_body().into_reader(), name))
+    }
+
     /// GET a public page/script (used for client_id discovery).
     pub fn get_text(&self, url: &str) -> Result<String, ApiError> {
         match self.fetch(url, None)? {
@@ -265,5 +290,22 @@ mod tests {
             with_client_id("https://api-v2.soundcloud.com/a?offset=3&client_id=OLD&limit=2", "X"),
             "https://api-v2.soundcloud.com/a?offset=3&limit=2&client_id=X"
         );
+    }
+}
+
+/// `attachment; filename="Song.wav"` -> `Song.wav`.
+fn disposition_filename(v: &str) -> Option<String> {
+    let rest = v.split(';').map(str::trim).find_map(|p| p.strip_prefix("filename="))?;
+    let name = rest.trim_matches('"').trim();
+    (!name.is_empty()).then(|| name.to_string())
+}
+
+#[cfg(test)]
+mod disposition_tests {
+    #[test]
+    fn filename() {
+        assert_eq!(super::disposition_filename(r#"attachment; filename="My Song.wav""#).as_deref(), Some("My Song.wav"));
+        assert_eq!(super::disposition_filename("attachment;filename=a.mp3").as_deref(), Some("a.mp3"));
+        assert_eq!(super::disposition_filename("inline"), None);
     }
 }

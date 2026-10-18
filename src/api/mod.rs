@@ -19,6 +19,17 @@ impl Api {
         self.get("/me")
     }
 
+    /// Short-lived link to the original file of a track the artist made
+    /// downloadable (needs a signed-in account).
+    pub fn download_link(&self, track_id: u64) -> Result<String, ApiError> {
+        #[derive(serde::Deserialize)]
+        struct Link {
+            #[serde(rename = "redirectUri")]
+            redirect_uri: String,
+        }
+        Ok(self.get::<Link>(&format!("/tracks/{track_id}/download"))?.redirect_uri)
+    }
+
     /// First page of the user's liked tracks.
     pub fn likes_url(user_id: u64) -> String {
         format!("/users/{user_id}/track_likes?limit={PAGE}")

@@ -5,6 +5,7 @@ mod api;
 mod auth;
 mod cache;
 mod config;
+mod download;
 mod paths;
 mod player;
 mod signing;

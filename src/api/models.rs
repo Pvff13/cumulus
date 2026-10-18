@@ -60,6 +60,25 @@ pub struct Track {
     pub track_authorization: Option<String>,
     #[serde(default)]
     pub waveform_url: Option<String>,
+    /// The artist lets people download the original file from SoundCloud.
+    #[serde(default)]
+    pub downloadable: Option<bool>,
+    #[serde(default)]
+    pub has_downloads_left: Option<bool>,
+    /// The artist's own "buy" / "free download" link (Bandcamp, Hypeddit...).
+    #[serde(default)]
+    pub purchase_url: Option<String>,
+    #[serde(default)]
+    pub purchase_title: Option<String>,
+}
+
+/// A download the artist offers for a track.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Download<'a> {
+    /// The original file, straight from SoundCloud.
+    File,
+    /// A page the artist links to (often a "free download" gate or a store).
+    Link { url: &'a str, label: &'a str },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -83,6 +102,17 @@ impl Track {
             _ if self.drm_only() => Availability::Drm,
             _ => Availability::Playable,
         }
+    }
+
+    /// What the artist offers to download, if anything. Cumulus only ever
+    /// downloads files artists chose to offer; it never saves streams.
+    pub fn download(&self) -> Option<Download<'_>> {
+        if self.downloadable == Some(true) && self.has_downloads_left != Some(false) {
+            return Some(Download::File);
+        }
+        let url = self.purchase_url.as_deref().map(str::trim).filter(|u| u.starts_with("http"))?;
+        let label = self.purchase_title.as_deref().map(str::trim).filter(|t| !t.is_empty()).unwrap_or("Buy / download");
+        Some(Download::Link { url, label })
     }
 
     /// Every full stream is encrypted (label/distributor content).
@@ -334,6 +364,26 @@ mod tests {
         assert_eq!(track(&["cbc-encrypted-hls", "ctr-encrypted-hls"]).availability(), Availability::Drm);
         assert_eq!(track(&["hls", "ctr-encrypted-hls"]).availability(), Availability::Playable);
         assert_eq!(track(&["hls"]).availability(), Availability::Playable);
+    }
+
+    #[test]
+    fn download_offers() {
+        let track = |extra: &str| -> Track {
+            serde_json::from_str(&format!(r#"{{"id":1,"title":"t","user":{{"username":"u"}}{extra}}}"#)).unwrap()
+        };
+        assert_eq!(track("").download(), None);
+        assert_eq!(track(r#","downloadable":true,"has_downloads_left":true"#).download(), Some(Download::File));
+        // Download limit used up: fall back to the artist's link, if any.
+        assert_eq!(track(r#","downloadable":true,"has_downloads_left":false"#).download(), None);
+        assert_eq!(
+            track(r#","downloadable":null,"purchase_url":"https://hypeddit.com/x","purchase_title":"FREE DOWNLOAD""#).download(),
+            Some(Download::Link { url: "https://hypeddit.com/x", label: "FREE DOWNLOAD" })
+        );
+        assert_eq!(
+            track(r##","purchase_url":"https://bandcamp.com/x","purchase_title":" ""##).download(),
+            Some(Download::Link { url: "https://bandcamp.com/x", label: "Buy / download" })
+        );
+        assert_eq!(track(r##","purchase_url":" ""##).download(), None);
     }
 
     #[test]
