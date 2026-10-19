@@ -97,6 +97,16 @@ and every track credits its artist and links back to SoundCloud.
 - Keyboard: **Space** play/pause, **←/→** seek 5 s, **↑/↓** volume, **/** search.
 - **Gapless-ish:** the next track is opened about 30 s before the current one
   ends, and its audio is appended straight after the current track's audio.
+- **Crossfade and transitions:** **♫ Crossfade** (bottom of the sidebar) sets
+  a 1–12 s crossfade for tracks that follow on by themselves (skipping is
+  still instant). The **Transitions** dropdown picks the style: **Smooth**
+  (even loudness), **Linear**, **Fade out, then in**, **Filter sweep (bass
+  swap)** or **Echo out**. Two extra options:
+  - **Trim silence** (on by default) skips silence at the end and start of
+    tracks, so transitions happen over music;
+  - **Match volume** evens out loudness between tracks (within ±6 dB).
+
+  Both use a short background scan of each track.
 - **Formats:** plain HLS AAC (160 kbps when your account gets it, else 96),
   else progressive MP3. Decoding happens natively (symphonia); Windows'
   own audio stack does any resampling.

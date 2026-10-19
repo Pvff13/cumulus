@@ -189,6 +189,13 @@ pub struct App {
     close_to_tray: bool,
     /// Tracks being downloaded right now.
     downloading: HashSet<u64>,
+    /// Crossfade between tracks, seconds (0 = off).
+    crossfade: f32,
+    transition: player::Style,
+    trim_silence: bool,
+    match_volume: bool,
+    /// The Transitions list in the Crossfade menu is expanded.
+    transitions_open: bool,
     /// Window hidden to the tray.
     hidden: bool,
     /// Quit was chosen: let the next close request through.
@@ -229,6 +236,20 @@ impl App {
                 ctx.request_repaint();
             })
         };
+        player.set_crossfade(config.crossfade_secs);
+        player.set_style(player::Style::from_key(&config.transition));
+        player.set_trim_silence(config.trim_silence);
+        player.set_match_volume(config.match_volume);
+        // Debug builds: CUMULUS_DEV_CROSSFADE=<secs> overrides it without saving.
+        #[cfg(debug_assertions)]
+        if let Some(secs) = std::env::var("CUMULUS_DEV_CROSSFADE").ok().and_then(|s| s.parse().ok()) {
+            player.set_crossfade(secs);
+        }
+        #[cfg(debug_assertions)]
+        if let Ok(style) = std::env::var("CUMULUS_DEV_TRANSITION") {
+            player.set_style(player::Style::from_key(&style));
+            player.set_match_volume(std::env::var_os("CUMULUS_DEV_MATCH").is_some());
+        }
         let desktop = {
             let (tx, ctx) = (tx.clone(), cc.egui_ctx.clone());
             Desktop::new(cc, move |e| {
@@ -274,6 +295,11 @@ impl App {
             desktop,
             close_to_tray: config.close_to_tray,
             downloading: HashSet::new(),
+            crossfade: config.crossfade_secs,
+            transition: player::Style::from_key(&config.transition),
+            trim_silence: config.trim_silence,
+            match_volume: config.match_volume,
+            transitions_open: false,
             hidden: false,
             quitting: false,
             update_checker: Arc::default(),
@@ -758,6 +784,104 @@ impl App {
         }
     }
 
+    /// "Crossfade" button in the sidebar: a 0-12 s slider (0 = off).
+    fn crossfade_menu(&mut self, ui: &mut egui::Ui) {
+        let label = if self.crossfade > 0.0 {
+            format!("♫ Crossfade: {} s", self.crossfade.round())
+        } else {
+            "♫ Crossfade: off".to_string()
+        };
+        let stay_open = egui::containers::menu::MenuConfig::new().close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside);
+        egui::containers::menu::MenuButton::new(RichText::new(label).small())
+            .config(stay_open)
+            .ui(ui, |ui| self.crossfade_settings(ui));
+    }
+
+    /// The contents of the Crossfade menu.
+    fn crossfade_settings(&mut self, ui: &mut egui::Ui) {
+        {
+            ui.set_min_width(250.0);
+            ui.label(RichText::new("Crossfade").strong());
+            ui.label(
+                RichText::new("Fades each track out while the next fades in, when one track follows on from another. Skipping is still instant.")
+                    .small()
+                    .color(muted()),
+            );
+            ui.add_space(4.0);
+            ui.spacing_mut().slider_width = 180.0;
+            let r = ui.add(
+                egui::Slider::new(&mut self.crossfade, 0.0..=12.0)
+                    .step_by(1.0)
+                    .trailing_fill(true)
+                    .custom_formatter(|v, _| if v == 0.0 { "Off".into() } else { format!("{v} s") }),
+            );
+            if r.changed() {
+                self.player.set_crossfade(self.crossfade);
+            }
+            let mut save = r.drag_stopped() || (r.changed() && !r.dragged());
+
+            ui.add_space(8.0);
+            ui.label(RichText::new("Transitions").strong());
+            ui.add_enabled_ui(self.crossfade > 0.0, |ui| {
+                let arrow = if self.transitions_open { "▴" } else { "▾" };
+                let header = egui::Button::new(format!("{}   {arrow}", self.transition.label())).min_size(egui::vec2(236.0, 26.0));
+                if ui.add(header).clicked() {
+                    self.transitions_open = !self.transitions_open;
+                }
+                if self.transitions_open {
+                    egui::Frame::NONE
+                        .fill(sidebar())
+                        .corner_radius(6.0)
+                        .inner_margin(4.0)
+                        .show(ui, |ui| {
+                            ui.set_min_width(228.0);
+                            for style in player::Style::ALL {
+                                let selected = self.transition == style;
+                                let r = ui
+                                    .add_sized([228.0, 24.0], egui::Button::selectable(selected, style.label()))
+                                    .on_hover_text(style.description());
+                                if r.clicked() {
+                                    self.transition = style;
+                                    self.player.set_style(style);
+                                    self.transitions_open = false;
+                                    save = true;
+                                }
+                            }
+                        });
+                }
+            });
+            let note = if self.crossfade > 0.0 { self.transition.description() } else { "Set a crossfade above to use these." };
+            ui.label(RichText::new(note).small().color(muted()));
+
+            ui.add_space(8.0);
+            if ui
+                .checkbox(&mut self.trim_silence, "Trim silence")
+                .on_hover_text("Skips silence at the end and start of tracks, so transitions happen over music, not quiet gaps. Works with or without a crossfade.")
+                .changed()
+            {
+                self.player.set_trim_silence(self.trim_silence);
+                save = true;
+            }
+            if ui
+                .checkbox(&mut self.match_volume, "Match volume")
+                .on_hover_text("Evens out loudness between tracks, so a quiet upload after a loud one doesn't feel like a drop.")
+                .changed()
+            {
+                self.player.set_match_volume(self.match_volume);
+                save = true;
+            }
+
+            if save {
+                let mut config = Config::load();
+                config.crossfade_secs = self.crossfade;
+                config.transition = self.transition.key().into();
+                config.trim_silence = self.trim_silence;
+                config.match_volume = self.match_volume;
+                config.save();
+            }
+        }
+    }
+
     pub(super) fn set_autoplay(&mut self, on: bool) {
         self.autoplay = on;
         self.autoplay_for = None;
@@ -898,6 +1022,7 @@ impl App {
                         config.close_to_tray = self.close_to_tray;
                         config.save();
                     }
+                    self.crossfade_menu(ui);
                     if let Some((base, accent)) = theme::appearance_menu(ui) {
                         theme::set(ui.ctx(), base, accent);
                         let mut config = Config::load();
@@ -1024,6 +1149,16 @@ impl eframe::App for App {
         // Keep the drawn screen unless an action above switched to another one.
         if matches!(self.screen, Screen::Taken) {
             self.screen = screen;
+        }
+        // Debug builds: CUMULUS_DEV_XFADE_MENU=1 shows the Crossfade menu's contents
+        // in a window (with Transitions expanded) for screenshots.
+        #[cfg(debug_assertions)]
+        if std::env::var_os("CUMULUS_DEV_XFADE_MENU").is_some() {
+            if ctx.cumulative_frame_nr() < 2 {
+                self.transitions_open = true;
+                self.crossfade = self.crossfade.max(6.0);
+            }
+            egui::Window::new("Crossfade (debug)").default_pos([420.0, 140.0]).show(&ctx, |ui| self.crossfade_settings(ui));
         }
         self.popout(&ctx);
         self.art.end_frame();

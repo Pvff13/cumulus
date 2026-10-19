@@ -3,7 +3,7 @@
 //! it to the device). The stream callback pulls from `SampleQueue`.
 
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -57,6 +57,15 @@ impl SampleQueue {
         self.boundaries.push_back(Boundary { at, track_id, start, rate });
     }
 
+    /// Moves the start position of the newest boundary, if it's `track_id`'s
+    /// and nothing has been written after it yet (leading silence skipped).
+    pub fn retime(&mut self, track_id: u64, start: f64) {
+        let written = self.written;
+        if let Some(b) = self.boundaries.back_mut().filter(|b| b.track_id == track_id && b.at == written) {
+            b.start = start;
+        }
+    }
+
     /// (track id, position in seconds) of what is playing right now.
     pub fn now(&self) -> Option<(u64, f64)> {
         let b = self.boundaries.iter().rev().find(|b| b.at <= self.consumed)?;
@@ -75,6 +84,12 @@ pub struct Shared {
     /// f32 bits, 0.0..=1.0 (applied with a squared curve).
     pub volume: AtomicU32,
     pub paused: AtomicBool,
+    /// Crossfade between tracks, milliseconds (0 = gapless, no fade).
+    pub crossfade_ms: AtomicU32,
+    /// Crossfade style (`Style::index`).
+    pub style: AtomicU8,
+    pub trim_silence: AtomicBool,
+    pub match_volume: AtomicBool,
 }
 
 impl Shared {
@@ -83,6 +98,10 @@ impl Shared {
             queue: Mutex::new(SampleQueue::default()),
             volume: AtomicU32::new(volume.to_bits()),
             paused: AtomicBool::new(true),
+            crossfade_ms: AtomicU32::new(0),
+            style: AtomicU8::new(0),
+            trim_silence: AtomicBool::new(false),
+            match_volume: AtomicBool::new(false),
         }
     }
 }

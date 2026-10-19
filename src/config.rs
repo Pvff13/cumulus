@@ -24,6 +24,14 @@ pub struct Config {
     /// Colours: "dark", "grey" or "light", and an accent name (see ui::theme).
     pub theme: String,
     pub accent: String,
+    /// Seconds to crossfade between tracks (0 = off, gapless).
+    pub crossfade_secs: f32,
+    /// Crossfade style ("smooth", "linear", "dip", "filter", "echo").
+    pub transition: String,
+    /// Skip silence at the ends/starts of tracks.
+    pub trim_silence: bool,
+    /// Even out loudness between tracks.
+    pub match_volume: bool,
     /// Path of the build to update from; defaults to this project's
     /// `target/release/cumulus.exe` (set at compile time).
     pub update_source: Option<String>,
@@ -31,7 +39,7 @@ pub struct Config {
 
 impl Default for Config {
     fn default() -> Self {
-        Self { client_id: None, art_cache_mb: 100, volume: 0.8, close_to_tray: true, autoplay: true, popout: false, popout_on_top: true, popout_controls: true, theme: "dark".into(), accent: "purple".into(), update_source: None }
+        Self { client_id: None, art_cache_mb: 100, volume: 0.8, close_to_tray: true, autoplay: true, popout: false, popout_on_top: true, popout_controls: true, theme: "dark".into(), accent: "purple".into(), crossfade_secs: 0.0, transition: "smooth".into(), trim_silence: true, match_volume: false, update_source: None }
     }
 }
 

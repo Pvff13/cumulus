@@ -197,7 +197,9 @@ pub fn apply(ctx: &egui::Context) {
     let light = p.base == Base::Light;
     let mut v = if light { egui::Visuals::light() } else { egui::Visuals::dark() };
     v.panel_fill = p.bg;
-    v.window_fill = if light { p.extreme } else { p.surface };
+    // Menus and pop-ups use the page colour so buttons, sliders and
+    // checkboxes (drawn in `surface`) stand out inside them.
+    v.window_fill = if light { p.extreme } else { p.bg };
     v.extreme_bg_color = p.extreme;
     v.faint_bg_color = p.surface;
     v.override_text_color = Some(p.text);
