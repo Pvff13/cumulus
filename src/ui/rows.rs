@@ -357,3 +357,27 @@ mod tests {
         assert_eq!(super::compact(2_500_000), "2.5M");
     }
 }
+
+/// ▶ or ⏸ drawn as shapes, centred exactly on `center` (font glyphs sit
+/// off-centre by a few pixels). `scale` 1.0 is about 18 px tall.
+pub fn play_pause_icon(painter: &egui::Painter, center: egui::Pos2, pause: bool, scale: f32, color: egui::Color32) {
+    let v = |x: f32, y: f32| egui::vec2(x * scale, y * scale);
+    if pause {
+        // Snapped to whole physical pixels with one shared width: otherwise a
+        // centre between pixels anti-aliases one bar thinner than the other.
+        let ppp = painter.ctx().pixels_per_point();
+        let px = |points: f32| (points * ppp).round().max(1.0);
+        let (w, h, gap) = (px(5.0 * scale), px(16.0 * scale), px(4.0 * scale));
+        let left = (center.x * ppp - (2.0 * w + gap) / 2.0).round();
+        let top = (center.y * ppp - h / 2.0).round();
+        for x in [left, left + w + gap] {
+            let bar = egui::Rect::from_min_size(egui::pos2(x / ppp, top / ppp), egui::vec2(w / ppp, h / ppp));
+            painter.rect_filled(bar, 1.0 * scale, color);
+        }
+    } else {
+        // Spans -6..9, so its box sits 1.5 right of centre: about a tenth of
+        // its width, which is what reads as centred for a play triangle.
+        let points = vec![center + v(-6.0, -9.0), center + v(-6.0, 9.0), center + v(9.0, 0.0)];
+        painter.add(egui::Shape::convex_polygon(points, color, egui::Stroke::NONE));
+    }
+}

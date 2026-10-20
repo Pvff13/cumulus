@@ -196,6 +196,8 @@ pub struct App {
     match_volume: bool,
     /// The Transitions list in the Crossfade menu is expanded.
     transitions_open: bool,
+    /// The playlist/mix the queue was started from (its tile shows pause).
+    playing_list: Option<u64>,
     /// Window hidden to the tray.
     hidden: bool,
     /// Quit was chosen: let the next close request through.
@@ -300,6 +302,7 @@ impl App {
             trim_silence: config.trim_silence,
             match_volume: config.match_volume,
             transitions_open: false,
+            playing_list: None,
             hidden: false,
             quitting: false,
             update_checker: Arc::default(),
@@ -689,6 +692,7 @@ impl App {
 
     /// Starts playing `items[index]`, queueing the rest of the list after it.
     fn play_list(&mut self, items: Vec<QueueItem>, index: usize) {
+        self.playing_list = None;
         // DRM-only tracks are skipped without trying them.
         let drm: Vec<u64> = items
             .iter()

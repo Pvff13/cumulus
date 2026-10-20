@@ -70,8 +70,9 @@ and every track credits its artist and links back to SoundCloud.
   Drops, Weekly Wave) first, then More of what you like, Recently Played,
   stations, trending and recommended albums. **Recently Played** shows the
   songs you actually played (each with its own cover; click to play, right-
-  click for the track menu) instead of SoundCloud's repeated station tiles. Hover a mix and click ▶ to play
-  it, or click a tile to open it. Rows scroll sideways (Shift + wheel or the
+  click for the track menu) instead of SoundCloud's repeated station tiles. Hover a mix and click the ▶ in
+  the middle to play it, or click the tile or its title to open it. The mix
+  that's playing keeps a ⏸ on its tile to pause/resume it. Rows scroll sideways (Shift + wheel or the
   scrollbar).
 - **Stream, Likes, Playlists, Reposts** in the sidebar. Lists are virtualised:
   only the rows on screen are laid out, and the next page of 50 loads when you

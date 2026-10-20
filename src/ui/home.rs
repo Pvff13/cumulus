@@ -4,11 +4,11 @@
 use std::sync::Arc;
 use std::time::Instant;
 
-use eframe::egui::{self, Align, Align2, Color32, CursorIcon, FontId, Layout, RichText, vec2};
+use eframe::egui::{self, Align, Align2, Color32, CursorIcon, FontId, Layout, RichText, Sense, Stroke, vec2};
 
 use super::library::PlaylistView;
 use super::rows::{self, TrackAction};
-use super::theme::{hover, muted};
+use super::theme::{accent, hover, muted};
 use super::{App, Msg, Page, status_line};
 use crate::api::models::{HomeItem, Page as ApiPage, Playlist, Selection, SystemPlaylist, Track, TrackLike};
 use crate::api::{Api, ApiError, client};
@@ -31,6 +31,8 @@ pub struct HomeState {
 enum HomeAction {
     OpenMix(SystemPlaylist),
     PlayMix(SystemPlaylist),
+    /// Pause/resume the mix that's already playing.
+    TogglePlay,
     OpenPlaylist(Arc<Playlist>),
     /// Play the recently-played list from this position.
     PlayHistory(usize),
@@ -137,6 +139,8 @@ impl App {
 
         let mut action = None;
         let liked = &self.liked;
+        // The mix the queue came from, and whether it's playing (not paused).
+        let playing = self.playing_list.map(|id| (id, !self.player.is_paused() && self.player.now().is_some()));
         egui::ScrollArea::vertical().id_salt("home").auto_shrink(false).show(ui, |ui| {
             for (i, section) in self.home.sections.iter().enumerate() {
                 // "Recently Played": the songs themselves, each with its own cover.
@@ -167,7 +171,7 @@ impl App {
                     ui.horizontal_top(|ui| {
                         ui.spacing_mut().item_spacing.x = 14.0;
                         for item in items {
-                            if let Some(a) = tile(ui, &self.art, item) {
+                            if let Some(a) = tile(ui, &self.art, item, playing) {
                                 action = Some(a);
                             }
                         }
@@ -197,8 +201,10 @@ impl App {
             Some(HomeAction::PlayMix(m)) => {
                 let items = m.track_ids().into_iter().map(|id| QueueItem { id, track: None }).collect();
                 self.play_list(items, 0);
+                self.playing_list = Some(m.local_id());
                 self.status = Some(super::Status { text: format!("Playing {}", m.title), at: Instant::now(), error: false });
             }
+            Some(HomeAction::TogglePlay) => self.toggle_play(),
             Some(HomeAction::OpenPlaylist(p)) => self.open_playlist(p),
             Some(HomeAction::PlayHistory(n)) => {
                 let items = self.home.history.iter().map(|t| QueueItem { id: t.id, track: Some(t.clone()) }).collect();
@@ -254,8 +260,14 @@ fn track_tile(
     action
 }
 
-/// One tile: artwork, title, subtitle. Mixes get a ▶ while hovered.
-fn tile(ui: &mut egui::Ui, art: &crate::cache::art::ArtCache, item: &HomeItem) -> Option<HomeAction> {
+/// One tile: artwork, title, subtitle. Mixes get a ▶ while hovered; the
+/// mix that's playing keeps a ⏸ (▶ while paused) that pauses/resumes it.
+fn tile(
+    ui: &mut egui::Ui,
+    art: &crate::cache::art::ArtCache,
+    item: &HomeItem,
+    playing: Option<(u64, bool)>,
+) -> Option<HomeAction> {
     let (title, subtitle, artwork, mix) = match item {
         HomeItem::Mix(m) => (m.title.as_str(), m.subtitle().to_string(), m.artwork(), Some(m)),
         HomeItem::Playlist(p) => (p.title.as_str(), p.user.username.clone(), p.artwork(), None),
@@ -266,28 +278,47 @@ fn tile(ui: &mut egui::Ui, art: &crate::cache::art::ArtCache, item: &HomeItem) -
         ui.set_width(TILE);
         let img = rows::artwork(ui, art, artwork, TILE, "t300x300").on_hover_cursor(CursorIcon::PointingHand);
         let hovered = ui.rect_contains_pointer(img.rect);
-        let play_center = img.rect.right_bottom() - vec2(24.0, 24.0);
+        let play_center = img.rect.center();
         let on_play = mix.is_some()
             && hovered
-            && ui.pointer_hover_pos().is_some_and(|p| p.distance(play_center) <= 18.0);
+            && ui.pointer_hover_pos().is_some_and(|p| p.distance(play_center) <= 24.0);
+        // Some(is playing) when this tile is the mix the queue came from.
+        let active = mix.and_then(|m| playing.filter(|(id, _)| *id == m.local_id()).map(|(_, p)| p));
         if hovered {
             ui.painter().rect_filled(img.rect, 4.0, hover().gamma_multiply(0.35));
-            if mix.is_some() {
-                ui.painter().circle_filled(play_center, 18.0, Color32::from_black_alpha(if on_play { 230 } else { 170 }));
-                ui.painter().text(play_center, Align2::CENTER_CENTER, "▶", FontId::proportional(16.0), Color32::WHITE);
-            }
         }
+        if mix.is_some() && (hovered || active.is_some()) {
+
+            let fill = if active.is_some() { accent() } else { Color32::from_black_alpha(if on_play { 230 } else { 170 }) };
+            let fill = if active.is_some() && on_play { fill.gamma_multiply(1.2) } else { fill };
+            ui.painter().circle_filled(play_center, 24.0, fill);
+            rows::play_pause_icon(ui.painter(), play_center, active == Some(true), 1.0, Color32::WHITE);
+        }
+        let open = || match item {
+            HomeItem::Mix(m) => Some(HomeAction::OpenMix(m.clone())),
+            HomeItem::Playlist(p) => Some(HomeAction::OpenPlaylist(Arc::new(p.clone()))),
+            HomeItem::Other => None,
+        };
         if img.clicked() {
-            action = Some(match (mix, item) {
-                (Some(m), _) if on_play => HomeAction::PlayMix(m.clone()),
-                (Some(m), _) => HomeAction::OpenMix(m.clone()),
-                (None, HomeItem::Playlist(p)) => HomeAction::OpenPlaylist(Arc::new(p.clone())),
-                _ => return,
-            });
+            action = match mix {
+                Some(_) if on_play && active.is_some() => Some(HomeAction::TogglePlay),
+                Some(m) if on_play => Some(HomeAction::PlayMix(m.clone())),
+                _ => open(),
+            };
         }
         ui.add_space(4.0);
-        ui.add(egui::Label::new(RichText::new(title).strong()).truncate().selectable(false));
+        // The title opens the mix/playlist too (underlined on hover).
+        let name = ui
+            .add(egui::Label::new(RichText::new(title).strong()).truncate().selectable(false).sense(Sense::click()))
+            .on_hover_cursor(CursorIcon::PointingHand);
+        if name.hovered() {
+            ui.painter().hline(name.rect.x_range(), name.rect.bottom(), Stroke::new(1.0, ui.visuals().text_color()));
+        }
+        if name.clicked() {
+            action = open();
+        }
         ui.add(egui::Label::new(RichText::new(subtitle).small().color(muted())).truncate().selectable(false));
     });
     action
 }
+

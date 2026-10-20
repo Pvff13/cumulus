@@ -164,12 +164,12 @@ impl App {
                     if icon(ui, "⏮", false, "Previous").clicked() {
                         self.previous();
                     }
-                    let main = if playing { "⏸" } else { "▶" };
-                    if ui
-                        .add(egui::Button::new(RichText::new(main).size(20.0)).corner_radius(16).min_size(vec2(36.0, 32.0)))
-                        .on_hover_text(if playing { "Pause (Space)" } else { "Play (Space)" })
-                        .clicked()
-                    {
+                    let main = ui
+                        .add(egui::Button::new("").corner_radius(16).min_size(vec2(36.0, 32.0)))
+                        .on_hover_text(if playing { "Pause (Space)" } else { "Play (Space)" });
+                    let color = ui.visuals().text_color();
+                    super::rows::play_pause_icon(ui.painter(), main.rect.center(), playing, 0.85, color);
+                    if main.clicked() {
                         self.toggle_play();
                     }
                     if icon(ui, "⏭", false, "Next").clicked() {

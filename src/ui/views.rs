@@ -225,7 +225,10 @@ impl App {
             });
         }
         match to_do {
-            Some((TrackAction::Play, _, items, start)) => self.play_list(items, start),
+            Some((TrackAction::Play, _, items, start)) => {
+                self.play_list(items, start);
+                self.playing_list = Some(playlist_id);
+            }
             Some((a, track, _, _)) => self.track_action(a, track),
             None => {}
         }

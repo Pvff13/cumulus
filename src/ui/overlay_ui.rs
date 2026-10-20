@@ -224,18 +224,20 @@ fn now_playing_card(
         right.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 2.0;
             ui.add_space(((CONTROLS_W - 3.0 * 34.0) / 2.0).max(0.0));
-            let button = |ui: &mut egui::Ui, glyph: &str, tip: &str, big: bool| {
-                let text = RichText::new(glyph).size(if big { 22.0 } else { 17.0 }).color(super::theme::text());
+            let button = |ui: &mut egui::Ui, glyph: &str, tip: &str| {
+                let text = RichText::new(glyph).size(17.0).color(super::theme::text());
                 ui.add(egui::Button::new(text).frame(false).min_size(vec2(32.0, 30.0))).on_hover_text(tip).clicked()
             };
-            if button(ui, "⏮", "Previous", false) {
+            if button(ui, "⏮", "Previous") {
                 action = Some(PopAction::Previous);
             }
-            let (glyph, tip) = if np.playing { ("⏸", "Pause") } else { ("▶", "Play") };
-            if button(ui, glyph, tip, true) {
+            let tip = if np.playing { "Pause" } else { "Play" };
+            let main = ui.add(egui::Button::new("").frame(false).min_size(vec2(32.0, 30.0))).on_hover_text(tip);
+            rows::play_pause_icon(ui.painter(), main.rect.center(), np.playing, 0.95, super::theme::text());
+            if main.clicked() {
                 action = Some(PopAction::PlayPause);
             }
-            if button(ui, "⏭", "Next", false) {
+            if button(ui, "⏭", "Next") {
                 action = Some(PopAction::Next);
             }
         });
