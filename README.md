@@ -83,7 +83,11 @@ Linux notes:
 - **Tray:** the icon only appears on desktops that show tray icons (KDE,
   Cinnamon, XFCE; GNOME needs the *AppIndicator* extension). Without one,
   closing the window quits Cumulus.
-- **Global hotkeys** work on X11 but not on Wayland, which doesn't allow them.
+- **Wayland desktops** (KDE Plasma, GNOME): Cumulus runs through XWayland,
+  so closing to the tray and global hotkeys work. To run it natively on
+  Wayland instead, start it with `CUMULUS_WAYLAND=1`; then the window's X
+  quits (Wayland doesn't let apps hide their windows) and global hotkeys are
+  off.
 - **Media keys and the system media controls** work through MPRIS.
 - **Logins** are saved in the system keyring (GNOME Keyring / KWallet). If
   there's none, they go in a file only your user can read.
@@ -154,8 +158,9 @@ and every track credits its artist and links back to SoundCloud.
   Vocal, Electronic, Late night...). Changes are heard instantly.
 - **Playback speed** (1×): Slowed, Normal and Nightcore, or anything from
   0.5× to 2×. Pitch follows speed, like a record.
-- **Paste a SoundCloud link** into Search to open that track, playlist,
-  album or artist. Short on.soundcloud.com links work too.
+- **Search bar on every page:** type in it to see results, or paste a
+  SoundCloud link to open that track, playlist, album or artist (short
+  on.soundcloud.com links work too). `/` or Ctrl+F jumps to it.
 - **Keyboard:** Space, ←/→ (seek), ↑/↓ (volume), Ctrl+←/→ (previous/next),
   M, S, R, L, Ctrl+F or /, Alt+←/→ (back/forward), Shift+< / Shift+> (speed).
   All of them can be changed in Settings.
@@ -268,8 +273,10 @@ WAV, AIFF, OGG Vorbis and ALAC.
   - output device;
   - stream quality (160 kbps AAC when available, or lighter 96–128 kbps);
   - skip a track that gets stuck.
-- **System:** start with Windows (opens hidden in the tray), and close to
-  tray.
+- **Sidebar:** put the sections in any order (↑ / ↓), or reset to the
+  default.
+- **System:** start with Windows (opens hidden in the tray), and whether the
+  window's X keeps Cumulus playing in the tray.
 - **Keyboard:** every shortcut can be changed with a key recorder.
   Play/pause, next, previous, volume, mute and like can also get **global**
   keys that work while another app is in front.

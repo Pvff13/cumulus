@@ -18,6 +18,7 @@ impl App {
 
     fn settings_sections(&mut self, ui: &mut egui::Ui) {
         section(ui, "Appearance", "", |ui| self.appearance_settings(ui));
+        section(ui, "Sidebar", "The order of the sections in the sidebar.", |ui| self.sidebar_settings(ui));
         section(ui, "Playback", "", |ui| self.playback_settings(ui));
         section(ui, "System", "", |ui| self.system_settings(ui));
         section(ui, "Keyboard", "Click a key to change it, then press the new combination (Backspace clears, Esc cancels).", |ui| {
@@ -25,6 +26,39 @@ impl App {
         });
         section(ui, "Integrations", "", |ui| self.integration_settings(ui));
         section(ui, "Hiding", "Tracks, artists and words you never want to see.", |ui| self.hiding_settings(ui));
+    }
+
+    fn sidebar_settings(&mut self, ui: &mut egui::Ui) {
+        let mut moved = None;
+        let n = self.nav_order.len();
+        egui::Grid::new("sidebar-order").num_columns(3).spacing([8.0, 4.0]).show(ui, |ui| {
+            for (i, nav) in self.nav_order.iter().enumerate() {
+                ui.label(RichText::new(format!("{}.", i + 1)).color(muted()));
+                ui.label(nav.label());
+                ui.horizontal(|ui| {
+                    if ui.add_enabled(i > 0, egui::Button::new("↑").small()).on_hover_text("Move up").clicked() {
+                        moved = Some((i, i - 1));
+                    }
+                    if ui.add_enabled(i + 1 < n, egui::Button::new("↓").small()).on_hover_text("Move down").clicked() {
+                        moved = Some((i, i + 1));
+                    }
+                });
+                ui.end_row();
+            }
+        });
+        let reset = ui.button("Reset to default order").clicked();
+        if let Some((from, to)) = moved {
+            self.nav_order.swap(from, to);
+        }
+        if reset {
+            self.nav_order = super::Nav::ALL.to_vec();
+        }
+        if moved.is_some() || reset {
+            let mut c = crate::config::Config::load();
+            // The default order is saved as "nothing", so later versions can add sections.
+            c.sidebar_order = if self.nav_order == super::Nav::ALL { Vec::new() } else { self.nav_order.iter().map(|n| n.key().to_string()).collect() };
+            c.save();
+        }
     }
 
     fn playback_settings(&mut self, ui: &mut egui::Ui) {
@@ -86,7 +120,12 @@ impl App {
     }
 
     fn system_settings(&mut self, ui: &mut egui::Ui) {
-        if self.desktop.has_tray() && ui.checkbox(&mut self.close_to_tray, "Close to tray, keep playing").changed() {
+        if self.desktop.can_hide_to_tray()
+            && ui
+                .checkbox(&mut self.close_to_tray, "Closing the window keeps Cumulus playing in the tray")
+                .on_hover_text("When on, the window's X hides Cumulus to the tray icon. Quit from the tray icon's menu.")
+                .changed()
+        {
             let mut config = crate::config::Config::load();
             config.close_to_tray = self.close_to_tray;
             config.save();

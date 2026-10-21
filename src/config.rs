@@ -78,6 +78,8 @@ pub struct Config {
     pub high_quality: bool,
     /// Skip a track that hasn't moved for this many seconds (0 = off).
     pub skip_stuck_secs: u32,
+    /// Sidebar sections, top to bottom (empty = the default order).
+    pub sidebar_order: Vec<String>,
     /// Hiding: "Not interested" tracks (id, label), blocked artists, keywords.
     pub hidden_tracks: Vec<(u64, String)>,
     pub blocked_artists: Vec<crate::ui::BlockedArtist>,
@@ -89,7 +91,7 @@ pub struct Config {
 
 impl Default for Config {
     fn default() -> Self {
-        Self { client_id: None, art_cache_mb: 100, volume: 0.8, close_to_tray: true, autoplay: true, popout: false, popout_on_top: true, popout_controls: true, theme: "dark".into(), accent: "purple".into(), crossfade_secs: 0.0, transition: "smooth".into(), trim_silence: true, match_volume: false, eq_on: false, eq_gains: [0.0; 6], speed: 1.0, discord_status: false, discord_app_id: None, hidden_tracks: Vec::new(), blocked_artists: Vec::new(), hidden_keywords: Vec::new(), scrobble_local: true, lastfm_user: None, listenbrainz_user: None, lastfm_api_key: None, lastfm_api_secret: None, visualizer: "off".into(), obs_text: false, obs_text_path: None, obs_text_format: "{artist} - {title}".into(), obs_overlay: false, obs_port: 8337, hotkeys: Default::default(), global_hotkeys: Default::default(), ui_scale: 1.0, font: "Default".into(), player_on_top: false, sidebar_right: false, compact: false, custom_theme: None, wallpaper_mode: "off".into(), wallpaper_path: None, wallpaper_minutes: 10, wallpaper_dim: 0.65, audio_device: None, high_quality: true, skip_stuck_secs: 0, update_source: None }
+        Self { client_id: None, art_cache_mb: 100, volume: 0.8, close_to_tray: true, autoplay: true, popout: false, popout_on_top: true, popout_controls: true, theme: "dark".into(), accent: "purple".into(), crossfade_secs: 0.0, transition: "smooth".into(), trim_silence: true, match_volume: false, eq_on: false, eq_gains: [0.0; 6], speed: 1.0, discord_status: false, discord_app_id: None, sidebar_order: Vec::new(), hidden_tracks: Vec::new(), blocked_artists: Vec::new(), hidden_keywords: Vec::new(), scrobble_local: true, lastfm_user: None, listenbrainz_user: None, lastfm_api_key: None, lastfm_api_secret: None, visualizer: "off".into(), obs_text: false, obs_text_path: None, obs_text_format: "{artist} - {title}".into(), obs_overlay: false, obs_port: 8337, hotkeys: Default::default(), global_hotkeys: Default::default(), ui_scale: 1.0, font: "Default".into(), player_on_top: false, sidebar_right: false, compact: false, custom_theme: None, wallpaper_mode: "off".into(), wallpaper_path: None, wallpaper_minutes: 10, wallpaper_dim: 0.65, audio_device: None, high_quality: true, skip_stuck_secs: 0, update_source: None }
     }
 }
 

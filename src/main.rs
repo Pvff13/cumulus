@@ -76,7 +76,9 @@ fn main() {
             .with_title("Cumulus")
             .with_inner_size([1100.0, 720.0])
             .with_min_inner_size([720.0, 480.0])
+            .with_app_id("cumulus")
             .with_icon(std::sync::Arc::new(ui::window_icon())),
+        event_loop_builder: Some(Box::new(choose_display_backend)),
         ..Default::default()
     };
     if let Err(e) = eframe::run_native(
@@ -87,6 +89,31 @@ fn main() {
         eprintln!("cumulus: {e}");
         std::process::exit(1);
     }
+}
+
+/// Set when the window runs on native Wayland, which doesn't let an app hide
+/// its own window (so "close to tray" can't work there).
+pub static NATIVE_WAYLAND: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Linux: prefer X11 (XWayland on Wayland desktops). Native Wayland ignores
+/// hiding a window, so the X button could never close to the tray, and it
+/// blocks global hotkeys. CUMULUS_WAYLAND=1 opts into native Wayland.
+fn choose_display_backend(builder: &mut winit::event_loop::EventLoopBuilder<eframe::UserEvent>) {
+    #[cfg(target_os = "linux")]
+    {
+        use std::sync::atomic::Ordering;
+        use winit::platform::x11::EventLoopBuilderExtX11;
+        let x11 = std::env::var_os("DISPLAY").is_some_and(|d| !d.is_empty());
+        let want_wayland = std::env::var_os("CUMULUS_WAYLAND").is_some();
+        let wayland = std::env::var_os("WAYLAND_DISPLAY").is_some_and(|d| !d.is_empty());
+        if x11 && !want_wayland {
+            builder.with_x11();
+        } else if wayland {
+            NATIVE_WAYLAND.store(true, Ordering::Relaxed);
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    let _ = builder;
 }
 
 /// Same AppUserModelID the installer gives the Start-menu shortcut, so Windows

@@ -95,7 +95,7 @@ enum Screen {
     Taken,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Nav {
     Home,
     Discover,
@@ -111,8 +111,10 @@ enum Nav {
 }
 
 impl Nav {
+    /// The default sidebar order (Settings → Sidebar can change it).
     const ALL: [Nav; 11] = [
         Nav::Home,
+        Nav::Search,
         Nav::Discover,
         Nav::Stream,
         Nav::Likes,
@@ -121,9 +123,46 @@ impl Nav {
         Nav::History,
         Nav::Following,
         Nav::Local,
-        Nav::Search,
         Nav::Settings,
     ];
+
+    /// Name in config.json.
+    fn key(self) -> &'static str {
+        match self {
+            Nav::Home => "home",
+            Nav::Search => "search",
+            Nav::Discover => "discover",
+            Nav::Stream => "stream",
+            Nav::Likes => "likes",
+            Nav::Playlists => "playlists",
+            Nav::Reposts => "reposts",
+            Nav::History => "history",
+            Nav::Following => "following",
+            Nav::Local => "local",
+            Nav::Settings => "settings",
+        }
+    }
+
+    fn from_key(key: &str) -> Option<Nav> {
+        Nav::ALL.into_iter().find(|n| n.key() == key)
+    }
+
+    /// A saved order: known names in their saved places, then anything
+    /// missing (e.g. a section added in a later version) in default order.
+    fn order_from(saved: &[String]) -> Vec<Nav> {
+        let mut order: Vec<Nav> = Vec::new();
+        for n in saved.iter().filter_map(|k| Nav::from_key(k)) {
+            if !order.contains(&n) {
+                order.push(n);
+            }
+        }
+        for n in Nav::ALL {
+            if !order.contains(&n) {
+                order.push(n);
+            }
+        }
+        order
+    }
 
     fn label(self) -> &'static str {
         match self {
@@ -293,6 +332,8 @@ pub struct App {
     match_volume: bool,
     /// The Transitions list in the Crossfade menu is expanded.
     transitions_open: bool,
+    /// Sidebar sections in the user's order.
+    nav_order: Vec<Nav>,
     /// Hidden tracks, blocked artists and keywords.
     hide_rules: hide::Hidden,
     /// Artist pages: which tab is open, and the profile + links once loaded.
@@ -495,6 +536,7 @@ impl App {
             match_volume: config.match_volume,
             transitions_open: false,
             playing_list: None,
+            nav_order: Nav::order_from(&config.sidebar_order),
             hide_rules: hide::Hidden::load(&config),
             keyword_input: String::new(),
             likes_sort: library::LikesSort::Recent,
@@ -600,7 +642,7 @@ impl App {
             app.set_obs_overlay(true);
         }
         // Started with Windows: stay in the tray until clicked.
-        if crate::autostart::started_minimized() && app.desktop.has_tray() {
+        if crate::autostart::started_minimized() && app.desktop.can_hide_to_tray() {
             app.set_hidden(true);
         }
         app
@@ -609,19 +651,7 @@ impl App {
     /// Debug builds: start-up switches used for screenshots and tests.
     #[cfg(debug_assertions)]
     fn apply_dev_env(&mut self) {
-        self.nav = match std::env::var("CUMULUS_DEV_NAV").as_deref() {
-            Ok("stream") => Nav::Stream,
-            Ok("playlists") => Nav::Playlists,
-            Ok("reposts") => Nav::Reposts,
-            Ok("search") => Nav::Search,
-            Ok("likes") => Nav::Likes,
-            Ok("history") => Nav::History,
-            Ok("following") => Nav::Following,
-            Ok("discover") => Nav::Discover,
-            Ok("local") => Nav::Local,
-            Ok("settings") => Nav::Settings,
-            _ => Nav::Home,
-        };
+        self.nav = std::env::var("CUMULUS_DEV_NAV").ok().and_then(|k| Nav::from_key(&k)).unwrap_or(Nav::Home);
         if let Ok(q) = std::env::var("CUMULUS_DEV_SEARCH") {
             self.search_text = q.clone();
             self.search_query = q;
@@ -1021,6 +1051,8 @@ impl App {
             DesktopEvent::Media(M::SeekBy(dir, d)) => self.seek_to(pos + step(&dir, d.as_secs_f64())),
             DesktopEvent::Media(M::Seek(dir)) => self.seek_to(pos + step(&dir, 10.0)),
             DesktopEvent::Media(_) => {}
+            // Where windows can't be hidden, the tray icon just brings it forward.
+            DesktopEvent::ToggleWindow if !self.desktop.can_hide_to_tray() => self.set_hidden(false),
             DesktopEvent::ToggleWindow => self.set_hidden(!self.hidden),
             DesktopEvent::Quit => {
                 self.save_session(true);
@@ -1520,6 +1552,43 @@ impl App {
         }
     }
 
+    /// The search box at the top of every page. Typing in it (or Enter) opens
+    /// the Search page with the results; it stays focused while you type.
+    fn search_bar(&mut self, ui: &mut egui::Ui) {
+        let mut go = false;
+        ui.horizontal(|ui| {
+            let width = ui.available_width().min(560.0);
+            let resp = ui.add(
+                egui::TextEdit::singleline(&mut self.search_text)
+                    .id_salt("global-search")
+                    .hint_text("🔍  Search SoundCloud, or paste a link   ( / )")
+                    .desired_width(width),
+            );
+            if self.focus_search {
+                resp.request_focus();
+                self.focus_search = false;
+            }
+            if resp.changed() {
+                self.search_edited = Some(Instant::now());
+                go = !self.search_text.trim().is_empty();
+            }
+            if resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                self.run_search();
+                go = true;
+            }
+            if !self.search_text.is_empty() && ui.small_button("×").on_hover_text("Clear").clicked() {
+                self.search_text.clear();
+                self.search_edited = Some(Instant::now());
+            }
+        });
+        // Show the results (from any page).
+        if go && (self.nav != Nav::Search || !self.pages.is_empty()) {
+            self.nav = Nav::Search;
+            self.clear_pages();
+        }
+        ui.add_space(8.0);
+    }
+
     /// Re-applies the hiding rules to everything already loaded.
     fn rehide(&mut self) {
         let hidden = &self.hide_rules;
@@ -1659,7 +1728,7 @@ impl App {
             .show(ui, |ui| {
                 ui.label(RichText::new("Cumulus").heading().color(accent()));
                 ui.add_space(12.0);
-                for nav in Nav::ALL {
+                for nav in self.nav_order.clone() {
                     let selected = self.nav == nav && self.pages.is_empty();
                     let text = RichText::new(nav.label()).size(15.0);
                     if ui.add_sized([176.0, 27.0], egui::Button::selectable(selected, text)).clicked() {
@@ -1731,6 +1800,7 @@ impl App {
             .frame(egui::Frame::NONE.inner_margin(egui::Margin::symmetric(20, 16)))
             .show(ui, |ui| {
                 self.paint_wallpaper(ui);
+                self.search_bar(ui);
                 self.status_banner(ui);
                 self.content_ui(ui);
             });
@@ -1796,7 +1866,7 @@ impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         // The window's ✕ hides to the tray (if there is one) and playback continues.
-        if ctx.input(|i| i.viewport().close_requested()) && !self.quitting && self.close_to_tray && self.desktop.has_tray() {
+        if ctx.input(|i| i.viewport().close_requested()) && !self.quitting && self.close_to_tray && self.desktop.can_hide_to_tray() {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
             self.set_hidden(true);
         }
@@ -1933,5 +2003,22 @@ fn anonymize(msg: &mut Msg) {
             _ => {}
         },
         _ => {}
+    }
+}
+
+#[cfg(test)]
+mod nav_tests {
+    use super::Nav;
+
+    #[test]
+    fn saved_order() {
+        // Search sits right under Home by default.
+        assert_eq!(&Nav::ALL[..2], &[Nav::Home, Nav::Search]);
+        // A saved order is kept; unknown names are skipped; missing ones are added at the end.
+        let saved: Vec<String> = ["likes", "nope", "home", "likes"].iter().map(|s| s.to_string()).collect();
+        let order = Nav::order_from(&saved);
+        assert_eq!(&order[..2], &[Nav::Likes, Nav::Home]);
+        assert_eq!(order.len(), Nav::ALL.len());
+        assert_eq!(Nav::order_from(&[]), Nav::ALL.to_vec());
     }
 }

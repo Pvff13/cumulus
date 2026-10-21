@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 
-use eframe::egui::{self, Align, Key, Layout, RichText};
+use eframe::egui::{self, Align, Layout, RichText};
 
 use super::library::{Entry, FeedKind, Row};
 use super::rows::{self, RowCtx, TrackAction};
@@ -392,23 +392,8 @@ impl App {
     }
 
     fn search_ui(&mut self, ui: &mut egui::Ui) {
+        // The box itself is the search bar at the top of every page.
         ui.heading("Search");
-        ui.add_space(6.0);
-        let resp = ui.add(
-            egui::TextEdit::singleline(&mut self.search_text)
-                .hint_text("Search tracks, people, playlists, or paste a SoundCloud link   ( / )")
-                .desired_width(f32::INFINITY),
-        );
-        if self.focus_search {
-            resp.request_focus();
-            self.focus_search = false;
-        }
-        if resp.changed() {
-            self.search_edited = Some(std::time::Instant::now());
-        }
-        if resp.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) {
-            self.run_search();
-        }
         ui.add_space(4.0);
         ui.horizontal(|ui| {
             for (kind, label) in [
@@ -424,7 +409,7 @@ impl App {
         });
         ui.add_space(4.0);
         if self.search_query.is_empty() {
-            ui.label(RichText::new("Type to search SoundCloud.").color(muted()));
+            ui.label(RichText::new("Type in the search bar above to search SoundCloud.").color(muted()));
             return;
         }
         let kind = FeedKind::Search(self.search_kind);
@@ -524,9 +509,8 @@ impl App {
     }
 
     /// Global shortcut target for "/".
+    /// "/" or Ctrl+F: put the cursor in the search bar (any page).
     pub(super) fn focus_search(&mut self) {
-        self.nav = Nav::Search;
-        self.clear_pages();
         self.focus_search = true;
     }
 }

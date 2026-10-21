@@ -168,6 +168,12 @@ impl Desktop {
         self.tray.is_some()
     }
 
+    /// Whether the window can hide to the tray: needs a tray, and a display
+    /// that lets apps hide their windows (native Wayland doesn't).
+    pub fn can_hide_to_tray(&self) -> bool {
+        self.has_tray() && !crate::NATIVE_WAYLAND.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
     /// Call after a seek so the overlay's timeline jumps too.
     pub fn position_changed(&mut self) {
         self.shown_playing = None;
