@@ -3,6 +3,7 @@ mod fonts;
 mod hide;
 pub use hide::BlockedArtist;
 pub use theme::CustomTheme;
+mod anon;
 mod home;
 mod hotkeys;
 mod icon;
@@ -582,6 +583,18 @@ impl App {
             app.obs_overlay_on = true;
             app.obs_text_on = true;
         }
+        // Debug builds: CUMULUS_DEV_CUSTOM=<gallery theme> / CUMULUS_DEV_WALL=artwork, unsaved.
+        #[cfg(debug_assertions)]
+        if let Ok(name) = std::env::var("CUMULUS_DEV_CUSTOM") {
+            if let Some(t) = theme::gallery().into_iter().find(|t| t.name == name) {
+                theme::set_custom(&app.ctx, &t);
+                app.looks.custom = Some(t);
+            }
+        }
+        #[cfg(debug_assertions)]
+        if let Ok(mode) = std::env::var("CUMULUS_DEV_WALL") {
+            app.looks.wall_mode = looks::WallMode::from_key(&mode);
+        }
         app.player.set_visualizer(app.viz_style != visualizer::Style::Off);
         if app.obs_overlay_on {
             app.set_obs_overlay(true);
@@ -817,7 +830,10 @@ impl App {
         }
     }
 
-    fn handle(&mut self, msg: Msg) {
+    fn handle(&mut self, mut msg: Msg) {
+        if cfg!(debug_assertions) {
+            anonymize(&mut msg);
+        }
         match msg {
             Msg::Session(Ok(Some(user))) => {
                 self.me = user.id;
@@ -1828,6 +1844,19 @@ impl eframe::App for App {
         if matches!(self.screen, Screen::Taken) {
             self.screen = screen;
         }
+        // Debug builds: CUMULUS_DEV_ARTIST=<id>:<name> opens an artist page once.
+        #[cfg(debug_assertions)]
+        if let Some((id, name)) = std::env::var("CUMULUS_DEV_ARTIST").ok().and_then(|s| {
+            let (id, name) = s.split_once(':')?;
+            Some((id.parse::<u64>().ok()?, name.to_string()))
+        }) {
+            if matches!(self.screen, Screen::SignedIn(_)) {
+                // SAFETY: only the UI thread reads this dev-only variable.
+                unsafe { std::env::remove_var("CUMULUS_DEV_ARTIST") };
+                let url = format!("https://soundcloud.com/{name}");
+                self.open_artist(ArtistInfo { id, username: name, permalink_url: url, avatar_url: None });
+            }
+        }
         // Debug builds: CUMULUS_DEV_TRACK=<id> opens that track's page once.
         #[cfg(debug_assertions)]
         if let Some(id) = std::env::var("CUMULUS_DEV_TRACK").ok().and_then(|s| s.parse::<u64>().ok()) {
@@ -1860,4 +1889,49 @@ fn centered(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui)) {
         ui.add_space((ui.available_height() * 0.28).max(24.0));
         add(ui);
     });
+}
+
+/// Debug builds with CUMULUS_DEV_ANON=1: the user's own name becomes "you"
+/// in everything that arrives, for screenshots (see `anon`).
+fn anonymize(msg: &mut Msg) {
+    use crate::api::models::{HomeItem, PlaylistEntry};
+    match msg {
+        Msg::Session(Ok(Some(user))) => anon::start(user),
+        Msg::Feed { result: Ok(page), .. } => {
+            for r in &mut page.rows {
+                match r {
+                    library::Row::Track { track, .. } => anon::track(track),
+                    library::Row::Playlist { playlist, .. } => anon::playlist(playlist),
+                    library::Row::User(u) => anon::user(u),
+                }
+            }
+        }
+        Msg::Home { result: Ok(sections), .. } => anon::sections(sections),
+        Msg::History(Ok(tracks)) | Msg::QueueTracks(tracks) => tracks.iter_mut().for_each(anon::track),
+        Msg::HomeExtras { continue_items, fresh } => {
+            fresh.iter_mut().for_each(anon::track);
+            for it in continue_items {
+                if let HomeItem::Playlist(p) = it {
+                    anon::name(&mut p.user.username);
+                }
+            }
+        }
+        Msg::Playlist { result: Ok(p), .. } => {
+            anon::name(&mut p.user.username);
+            for e in &mut p.tracks {
+                if let PlaylistEntry::Full(t) = e {
+                    anon::name(&mut t.user.username);
+                }
+            }
+        }
+        Msg::Tracks { result: Ok(map), .. } => map.values_mut().for_each(|t| anon::name(&mut t.user.username)),
+        Msg::TrackPage { part, .. } => match part {
+            track_page::Part::Details(Ok(t)) => anon::name(&mut t.user.username),
+            track_page::Part::Related(Ok(v)) => v.iter_mut().for_each(|t| anon::name(&mut t.user.username)),
+            track_page::Part::Albums(Ok(v)) => v.iter_mut().for_each(|p| anon::name(&mut p.user.username)),
+            track_page::Part::Playlists { result: Ok((v, _)), .. } => v.iter_mut().for_each(|p| anon::name(&mut p.user.username)),
+            _ => {}
+        },
+        _ => {}
+    }
 }

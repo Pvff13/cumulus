@@ -3,7 +3,17 @@
 A lightweight native desktop player for your SoundCloud library: Rust + egui,
 native audio, no bundled browser. **Unofficial; not affiliated with SoundCloud.**
 
-![Cumulus: the Home view with your mixes, and the player bar](assets/screenshot.png)
+![Cumulus: Home with Continue listening, Fresh drops and your mixes](assets/screenshot.png)
+
+| | |
+|---|---|
+| ![A track page with stats, buttons and related tracks](assets/screenshots/track-page.png) | ![An artist page with Tracks, Popular, Albums, Playlists, Reposts, Related artists and About tabs](assets/screenshots/artist-page.png) |
+| **Track pages:** stats, related tracks, and the playlists a track is in | **Artist pages** with tabs, bio and links |
+| ![Discover by genre, in the Synthwave theme](assets/screenshots/discover-synthwave.png) | ![Settings with the theme gallery, in the Nord theme](assets/screenshots/settings-themes.png) |
+| **Discover:** trending, or browse 24 genres (Synthwave theme) | **Settings:** theme gallery, scale, fonts, layout, wallpapers (Nord theme) |
+
+![Likes playing, with the cover as wallpaper and the visualizer behind the player bar](assets/screenshots/wallpaper-visualizer.png)
+*The playing song's cover as wallpaper, with the visualizer behind the player bar.*
 
 ## Install (Windows 10 / 11)
 
