@@ -1,6 +1,6 @@
 [package]
 name = "cumulus"
-version = "0.3.6"
+version = "0.3.7"
 edition = "2024"
 description = "Lightweight native desktop player for your SoundCloud library (unofficial)"
 license = "MIT"
@@ -24,11 +24,16 @@ serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 # %LOCALAPPDATA% and friends.
 dirs = "7.0.0"
+rfd = "0.15"
+global-hotkey = "0.7"
+md5 = { package = "md-5", version = "0.10" }
 image = { version = "0.25.10", default-features = false, features = ["jpeg", "png"] }
 memmap2 = "0.9.11"
 symphonia-core = "0.6"
 symphonia-codec-aac = "0.6"
 symphonia-bundle-mp3 = "0.6"
+# Local files: probing, tags and the extra formats (FLAC, WAV, OGG/Vorbis, M4A, ALAC).
+symphonia = { version = "0.6", default-features = false, features = ["aac", "mp3", "flac", "pcm", "wav", "aiff", "vorbis", "ogg", "isomp4", "alac", "id3v1", "id3v2", "ape"] }
 cpal = "0.18"
 rtrb = "0.4"
 souvlaki = "0.8.3"

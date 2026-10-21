@@ -4,7 +4,7 @@
 use std::sync::Arc;
 use std::time::Instant;
 
-use eframe::egui::{self, Align, Align2, Color32, CursorIcon, FontId, Layout, RichText, Sense, Stroke, vec2};
+use eframe::egui::{self, Align, Color32, CursorIcon, Layout, RichText, Sense, Stroke, vec2};
 
 use super::library::PlaylistView;
 use super::rows::{self, TrackAction};
@@ -22,6 +22,10 @@ pub struct HomeState {
     pub sections: Vec<Selection>,
     /// What you actually played recently (shown as "Recently Played").
     pub history: Vec<Arc<Track>>,
+    /// Playlists, albums and mixes you played recently.
+    pub continue_items: Vec<HomeItem>,
+    /// New uploads (not reposts) from people you follow, newest first.
+    pub fresh: Vec<Arc<Track>>,
     pub loading: bool,
     pub error: Option<String>,
     pub started: bool,
@@ -36,11 +40,70 @@ enum HomeAction {
     OpenPlaylist(Arc<Playlist>),
     /// Play the recently-played list from this position.
     PlayHistory(usize),
+    /// Play the fresh-drops list from this position.
+    PlayFresh(usize),
     Track(TrackAction, Arc<Track>),
 }
 
 /// Your personal mixes and "Made for you" (Daily Drops) first; everything
 /// else keeps SoundCloud's order.
+/// Playlists/albums/mixes played recently ("Continue listening").
+fn fetch_continue(api: &Api) -> Result<Vec<HomeItem>, ApiError> {
+    /// Each entry wraps the playlist or mix that was played.
+    #[derive(serde::Deserialize)]
+    struct Context {
+        #[serde(default)]
+        playlist: Option<Playlist>,
+        #[serde(default)]
+        system_playlist: Option<SystemPlaylist>,
+    }
+    let page: ApiPage<Context> = api.get("/me/play-history/contexts?limit=12")?;
+    let mut seen = std::collections::HashSet::new();
+    Ok(page
+        .collection
+        .into_iter()
+        .filter_map(|c| c.system_playlist.map(HomeItem::Mix).or(c.playlist.map(HomeItem::Playlist)))
+        .filter(|it| match it {
+            HomeItem::Mix(m) => seen.insert(m.urn.clone()),
+            HomeItem::Playlist(p) => seen.insert(p.id.to_string()),
+            HomeItem::Other => false,
+        })
+        .collect())
+}
+
+/// Days since 1970-01-01 for an ISO date ("2026-10-21T08:30:54Z").
+fn days_from_iso(iso: &str) -> Option<i64> {
+    let mut p = iso.get(..10)?.split('-');
+    let (y, m, d): (i64, i64, i64) = (p.next()?.parse().ok()?, p.next()?.parse().ok()?, p.next()?.parse().ok()?);
+    // Howard Hinnant's days_from_civil.
+    let y = if m <= 2 { y - 1 } else { y };
+    let era = y.div_euclid(400);
+    let yoe = y - era * 400;
+    let doy = (153 * (if m > 2 { m - 3 } else { m + 9 }) + 2) / 5 + d - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    Some(era * 146_097 + doe - 719_468)
+}
+
+/// "Fresh drops": tracks people you follow uploaded in the last two weeks.
+fn fetch_fresh(api: &Api) -> Result<Vec<Arc<Track>>, ApiError> {
+    let page: ApiPage<crate::api::models::Activity> = api.get("/stream?limit=100")?;
+    let today = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64 / 86_400);
+    let mut seen = std::collections::HashSet::new();
+    Ok(page
+        .collection
+        .into_iter()
+        .filter(|a| a.kind == "track") // not "track-repost"
+        .filter_map(|a| a.track)
+        .filter(|t| {
+            let date = t.created_at.as_deref().or(t.display_date.as_deref());
+            date.and_then(days_from_iso).is_some_and(|d| today - d <= 14)
+        })
+        .filter(|t| seen.insert(t.id))
+        .take(20)
+        .map(Arc::new)
+        .collect())
+}
+
 /// Recently played tracks, newest first, each listed once.
 fn fetch_history(api: &Api) -> Result<Vec<Arc<Track>>, ApiError> {
     let page: ApiPage<TrackLike> = api.get(&Api::play_history_url())?;
@@ -94,6 +157,7 @@ impl App {
             });
             send(Msg::Home { cached: false, result });
             send(Msg::History(fetch_history(api)));
+            send(Msg::HomeExtras { continue_items: fetch_continue(api).unwrap_or_default(), fresh: fetch_fresh(api).unwrap_or_default() });
         });
     }
 
@@ -142,6 +206,37 @@ impl App {
         // The mix the queue came from, and whether it's playing (not paused).
         let playing = self.playing_list.map(|id| (id, !self.player.is_paused() && self.player.now().is_some()));
         egui::ScrollArea::vertical().id_salt("home").auto_shrink(false).show(ui, |ui| {
+            if !self.home.continue_items.is_empty() {
+                ui.label(RichText::new("Continue listening").size(18.0).strong());
+                ui.add_space(4.0);
+                egui::ScrollArea::horizontal().id_salt("home-continue").show(ui, |ui| {
+                    ui.horizontal_top(|ui| {
+                        ui.spacing_mut().item_spacing.x = 14.0;
+                        for item in &self.home.continue_items {
+                            if let Some(a) = tile(ui, &self.art, item, playing) {
+                                action = Some(a);
+                            }
+                        }
+                    });
+                });
+                ui.add_space(16.0);
+            }
+            if !self.home.fresh.is_empty() {
+                ui.label(RichText::new("Fresh drops").size(18.0).strong())
+                    .on_hover_text("New uploads from people you follow, from the last two weeks");
+                ui.add_space(4.0);
+                egui::ScrollArea::horizontal().id_salt("home-fresh").show(ui, |ui| {
+                    ui.horizontal_top(|ui| {
+                        ui.spacing_mut().item_spacing.x = 14.0;
+                        for (n, t) in self.home.fresh.iter().enumerate() {
+                            if let Some(a) = track_tile(ui, &self.art, liked, t, n, HomeAction::PlayFresh) {
+                                action = Some(a);
+                            }
+                        }
+                    });
+                });
+                ui.add_space(16.0);
+            }
             for (i, section) in self.home.sections.iter().enumerate() {
                 // "Recently Played": the songs themselves, each with its own cover.
                 if section.urn.contains(":recently-played") && !self.home.history.is_empty() {
@@ -151,7 +246,7 @@ impl App {
                         ui.horizontal_top(|ui| {
                             ui.spacing_mut().item_spacing.x = 14.0;
                             for (n, t) in self.home.history.iter().enumerate() {
-                                if let Some(a) = track_tile(ui, &self.art, liked, t, n) {
+                                if let Some(a) = track_tile(ui, &self.art, liked, t, n, HomeAction::PlayHistory) {
                                     action = Some(a);
                                 }
                             }
@@ -196,7 +291,7 @@ impl App {
         match action {
             Some(HomeAction::OpenMix(m)) => {
                 let view = PlaylistView::from_ids(Arc::new(m.as_playlist()), m.track_ids());
-                self.pages.push(Page::Playlist(view));
+                self.push_page(Page::Playlist(view));
             }
             Some(HomeAction::PlayMix(m)) => {
                 let items = m.track_ids().into_iter().map(|id| QueueItem { id, track: None }).collect();
@@ -208,6 +303,10 @@ impl App {
             Some(HomeAction::OpenPlaylist(p)) => self.open_playlist(p),
             Some(HomeAction::PlayHistory(n)) => {
                 let items = self.home.history.iter().map(|t| QueueItem { id: t.id, track: Some(t.clone()) }).collect();
+                self.play_list(items, n);
+            }
+            Some(HomeAction::PlayFresh(n)) => {
+                let items = self.home.fresh.iter().map(|t| QueueItem { id: t.id, track: Some(t.clone()) }).collect();
                 self.play_list(items, n);
             }
             Some(HomeAction::Track(a, t)) => self.track_action(a, t),
@@ -228,6 +327,7 @@ fn track_tile(
     liked: &std::collections::HashSet<u64>,
     track: &Arc<Track>,
     index: usize,
+    play: fn(usize) -> HomeAction,
 ) -> Option<HomeAction> {
     let mut action = None;
     ui.allocate_ui_with_layout(vec2(TILE, TILE + 46.0), Layout::top_down(Align::Min), |ui| {
@@ -236,25 +336,34 @@ fn track_tile(
             .on_hover_cursor(CursorIcon::PointingHand)
             .on_hover_text("Play");
         if ui.rect_contains_pointer(img.rect) {
-            let center = img.rect.right_bottom() - vec2(24.0, 24.0);
+            let center = img.rect.center();
             ui.painter().rect_filled(img.rect, 4.0, hover().gamma_multiply(0.35));
-            ui.painter().circle_filled(center, 18.0, Color32::from_black_alpha(200));
-            ui.painter().text(center, Align2::CENTER_CENTER, "▶", FontId::proportional(16.0), Color32::WHITE);
+            ui.painter().circle_filled(center, 24.0, Color32::from_black_alpha(200));
+            rows::play_pause_icon(ui.painter(), center, false, 1.0, Color32::WHITE);
         }
         if img.clicked() {
             action = Some(if track.availability() == crate::api::models::Availability::Drm {
                 HomeAction::Track(TrackAction::OpenOnSoundCloud, track.clone())
             } else {
-                HomeAction::PlayHistory(index)
+                play(index)
             });
         }
         img.context_menu(|ui| {
-            if let Some(a) = rows::track_menu(ui, track, liked.contains(&track.id)) {
-                action = Some(if a == TrackAction::Play { HomeAction::PlayHistory(index) } else { HomeAction::Track(a, track.clone()) });
+            if let Some(a) = rows::track_menu(ui, track, liked.contains(&track.id), false) {
+                action = Some(if a == TrackAction::Play { play(index) } else { HomeAction::Track(a, track.clone()) });
             }
         });
         ui.add_space(4.0);
-        ui.add(egui::Label::new(RichText::new(&track.title).strong()).truncate().selectable(false));
+        let name = ui
+            .add(egui::Label::new(RichText::new(&track.title).strong()).truncate().selectable(false).sense(Sense::click()))
+            .on_hover_cursor(CursorIcon::PointingHand)
+            .on_hover_text("Track details, related tracks and playlists");
+        if name.hovered() {
+            ui.painter().hline(name.rect.x_range(), name.rect.bottom(), Stroke::new(1.0, ui.visuals().text_color()));
+        }
+        if name.clicked() {
+            action = Some(HomeAction::Track(TrackAction::OpenTrack, track.clone()));
+        }
         ui.add(egui::Label::new(RichText::new(&track.user.username).small().color(muted())).truncate().selectable(false));
     });
     action

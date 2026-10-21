@@ -3,10 +3,15 @@
 
 mod api;
 mod auth;
+mod autostart;
 mod cache;
 mod config;
+mod discord;
 mod download;
+mod local;
+mod obs;
 mod paths;
+mod scrobble;
 mod player;
 mod signing;
 mod ui;
@@ -22,6 +27,11 @@ fn main() {
     // WebView2 engine is fully torn down once the token has been captured.
     if std::env::args().any(|a| a == auth::login::LOGIN_ARG) {
         std::process::exit(auth::login::run());
+    }
+    #[cfg(debug_assertions)]
+    if let Some(id) = std::env::args().skip_while(|a| a != "--discord-probe").nth(1) {
+        println!("{}", discord::probe(&id));
+        return;
     }
     #[cfg(debug_assertions)]
     if let Some(path) = std::env::args().skip_while(|a| a != "--probe").nth(1) {

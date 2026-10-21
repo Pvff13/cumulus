@@ -177,6 +177,109 @@ fn readable_on_light(mut c: Color32) -> Color32 {
     c
 }
 
+/// A theme made of the user's own colours (or one from the gallery).
+/// Shared as JSON text: {"name": ..., "light": false, "bg": "#121215", ...}.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct CustomTheme {
+    pub name: String,
+    #[serde(default)]
+    pub light: bool,
+    pub bg: String,
+    pub sidebar: String,
+    pub surface: String,
+    pub text: String,
+    pub muted: String,
+    pub accent: String,
+}
+
+/// "#1a2b3c" -> colour (None if malformed).
+pub fn parse_hex(s: &str) -> Option<Color32> {
+    let s = s.trim().trim_start_matches('#');
+    if s.len() != 6 {
+        return None;
+    }
+    let v = u32::from_str_radix(s, 16).ok()?;
+    Some(Color32::from_rgb((v >> 16) as u8, (v >> 8) as u8, v as u8))
+}
+
+pub fn to_hex(c: Color32) -> String {
+    format!("#{:02x}{:02x}{:02x}", c.r(), c.g(), c.b())
+}
+
+fn mix(a: Color32, b: Color32, t: f32) -> Color32 {
+    let m = |x: u8, y: u8| (x as f32 + (y as f32 - x as f32) * t).round() as u8;
+    Color32::from_rgb(m(a.r(), b.r()), m(a.g(), b.g()), m(a.b(), b.b()))
+}
+
+impl CustomTheme {
+    #[allow(clippy::too_many_arguments)]
+    fn new(name: &str, light: bool, bg: &str, sidebar: &str, surface: &str, text: &str, muted: &str, accent: &str) -> Self {
+        let s = |v: &str| v.to_string();
+        Self { name: s(name), light, bg: s(bg), sidebar: s(sidebar), surface: s(surface), text: s(text), muted: s(muted), accent: s(accent) }
+    }
+
+    /// The current colours as a custom theme (starting point for the editor).
+    pub fn from_current(name: &str) -> Self {
+        let p = get();
+        Self {
+            name: name.to_string(),
+            light: p.base == Base::Light,
+            bg: to_hex(p.bg),
+            sidebar: to_hex(p.sidebar),
+            surface: to_hex(p.surface),
+            text: to_hex(p.text),
+            muted: to_hex(p.muted),
+            accent: to_hex(p.accent),
+        }
+    }
+
+    fn palette(&self) -> Option<Palette> {
+        let base = if self.light { LIGHT } else { DARK };
+        let (bg, text) = (parse_hex(&self.bg)?, parse_hex(&self.text)?);
+        Some(Palette {
+            base: base.base,
+            accent_key: "custom",
+            accent: parse_hex(&self.accent)?,
+            bg,
+            sidebar: parse_hex(&self.sidebar)?,
+            surface: parse_hex(&self.surface)?,
+            extreme: if self.light { Color32::WHITE } else { mix(bg, Color32::BLACK, 0.25) },
+            text,
+            muted: parse_hex(&self.muted)?,
+            error: base.error,
+            hover: mix(bg, text, 0.07),
+            tag: base.tag,
+        })
+    }
+}
+
+/// Ready-made themes for the gallery.
+pub fn gallery() -> Vec<CustomTheme> {
+    vec![
+        CustomTheme::new("SoundCloud", false, "#121212", "#0a0a0a", "#1f1f1f", "#f2f2f2", "#999999", "#ff5500"),
+        CustomTheme::new("Midnight", false, "#0f1626", "#0a0f1c", "#1a2438", "#e6ecf5", "#8b99b3", "#5b8cff"),
+        CustomTheme::new("Synthwave", false, "#1a1033", "#120a26", "#2a1a4d", "#f5e6ff", "#b39bd1", "#ff3ea5"),
+        CustomTheme::new("Forest", false, "#121a14", "#0c120e", "#1c2820", "#e3efe5", "#93a897", "#4ade80"),
+        CustomTheme::new("OLED", false, "#000000", "#000000", "#141414", "#ffffff", "#8a8a8a", "#8b6cff"),
+        CustomTheme::new("Mono", false, "#111111", "#000000", "#1e1e1e", "#f2f2f2", "#9a9a9a", "#e6e6e6"),
+        CustomTheme::new("Nord", false, "#2e3440", "#272c36", "#3b4252", "#eceff4", "#a3abb9", "#88c0d0"),
+        CustomTheme::new("Dracula", false, "#282a36", "#21222c", "#343746", "#f8f8f2", "#a4a7c0", "#bd93f9"),
+        CustomTheme::new("Solarized", false, "#002b36", "#00212b", "#073642", "#eee8d5", "#93a1a1", "#b58900"),
+        CustomTheme::new("Coffee", false, "#1e1714", "#16110e", "#2b211c", "#f0e6dc", "#b09a8a", "#d4a373"),
+        CustomTheme::new("Sakura", true, "#fff5f8", "#fbe7ee", "#f6dbe5", "#2a1a20", "#7a5a66", "#d6457a"),
+        CustomTheme::new("Paper", true, "#f5f1e8", "#ebe5d8", "#e2dacb", "#2b2620", "#6e665a", "#b5542b"),
+    ]
+}
+
+/// Switches to a custom theme. Returns false (and changes nothing) if a
+/// colour is malformed.
+pub fn set_custom(ctx: &egui::Context, theme: &CustomTheme) -> bool {
+    let Some(p) = theme.palette() else { return false };
+    *PALETTE.write().unwrap_or_else(|e| e.into_inner()) = p;
+    apply(ctx);
+    true
+}
+
 /// Switches theme and accent (unknown names fall back to dark / purple).
 pub fn set(ctx: &egui::Context, base: &str, accent: &str) {
     let base = Base::from_key(base);

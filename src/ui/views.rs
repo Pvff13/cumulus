@@ -6,7 +6,7 @@ use std::sync::Arc;
 use eframe::egui::{self, Align, Key, Layout, RichText};
 
 use super::library::{Entry, FeedKind, Row};
-use super::rows::{self, ROW_HEIGHT, RowCtx, TrackAction};
+use super::rows::{self, RowCtx, TrackAction};
 use super::theme::muted;
 use super::{App, ArtistInfo, Msg, Nav, Page, status_line};
 use crate::api::models::{Playlist, Track};
@@ -28,6 +28,9 @@ impl App {
                     self.feed_ui(ui, kind, Some(nav.label()), nav.empty_text());
                 }
                 (Nav::Home, None) => self.home_ui(ui),
+                (Nav::Settings, None) => self.settings_ui(ui),
+                (Nav::Discover, None) => self.discover_ui(ui),
+                (Nav::Local, None) => self.local_ui(ui),
                 (_, None) => self.search_ui(ui),
             },
         }
@@ -35,7 +38,7 @@ impl App {
 
     fn back_button(&mut self, ui: &mut egui::Ui) {
         if ui.button("← Back").clicked() {
-            self.pages.pop();
+            self.go_back();
         }
         ui.add_space(8.0);
     }
@@ -46,6 +49,7 @@ impl App {
             self.load_feed(kind, true);
         }
         let mut menu = super::overlay_ui::MenuResult::default();
+        let mut new_sort = None;
         let feed = &self.feeds[&kind];
         let mut refresh = false;
         ui.horizontal(|ui| {
@@ -58,6 +62,17 @@ impl App {
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 refresh = ui.add_enabled(!feed.loading, egui::Button::new("↻")).on_hover_text("Refresh").clicked();
                 menu = super::overlay_ui::overlay_menu(ui, &mut self.overlay_menu);
+                if kind == FeedKind::Likes {
+                    let label = format!("Sort: {} ▾", self.likes_sort.label());
+                    egui::containers::menu::MenuButton::new(label).ui(ui, |ui| {
+                        for s in super::library::LikesSort::ALL {
+                            if ui.selectable_label(self.likes_sort == s, s.label()).clicked() {
+                                new_sort = Some(s);
+                                ui.close();
+                            }
+                        }
+                    });
+                }
             });
         });
         status_line(ui, feed.error.as_deref(), feed.from_cache && feed.loading);
@@ -68,7 +83,7 @@ impl App {
                 ui.label(RichText::new(empty).color(muted()));
             }
         } else {
-            let cx = RowCtx { art: &self.art, liked: &self.liked, current: self.queue.current_id() };
+            let cx = RowCtx { art: &self.art, liked: &self.liked, current: self.queue.current_id(), local_list: false };
             let mut open: Option<Arc<Playlist>> = None;
             let mut artist: Option<ArtistInfo> = None;
             let mut action: Option<(usize, TrackAction)> = None;
@@ -76,7 +91,7 @@ impl App {
             ui.spacing_mut().item_spacing.y = 2.0;
             egui::ScrollArea::vertical().id_salt(kind).auto_shrink(false).show_rows(
                 ui,
-                ROW_HEIGHT,
+                rows::row_height(),
                 feed.rows.len(),
                 |ui, range| {
                     for (i, row) in feed.rows[range.clone()].iter().enumerate() {
@@ -143,6 +158,19 @@ impl App {
                 self.load_feed(kind, false);
             }
         }
+        if let Some(s) = new_sort.filter(|s| *s != self.likes_sort) {
+            self.likes_sort = s;
+            // Recently liked is the server's order: reload. Others need every
+            // page, sorted (the loader keeps going until the end).
+            if s == super::library::LikesSort::Recent {
+                refresh = true;
+            } else if let Some(feed) = self.feeds.get_mut(&kind) {
+                s.sort(&mut feed.rows);
+                if feed.next.is_some() && !feed.loading {
+                    self.load_feed(kind, false);
+                }
+            }
+        }
         if refresh {
             self.load_feed(kind, true);
         }
@@ -176,14 +204,14 @@ impl App {
             ui.spinner();
         }
 
-        let cx = RowCtx { art: &art, liked: &self.liked, current };
+        let cx = RowCtx { art: &art, liked: &self.liked, current, local_list: false };
         let mut visible = 0..0;
         let mut action: Option<(usize, TrackAction)> = None;
         ui.spacing_mut().item_spacing.y = 2.0;
         egui::ScrollArea::vertical()
             .id_salt(("playlist", p.id))
             .auto_shrink(false)
-            .show_rows(ui, ROW_HEIGHT, view.entries.len(), |ui, range| {
+            .show_rows(ui, rows::row_height(), view.entries.len(), |ui, range| {
                 for (i, entry) in view.entries[range.clone()].iter().enumerate() {
                     match entry {
                         Entry::Loaded(t) => {
@@ -237,19 +265,130 @@ impl App {
 
     fn artist_ui(&mut self, ui: &mut egui::Ui, artist: &ArtistInfo) {
         self.back_button(ui);
+        let details = self.artist_details.get(&artist.id).and_then(|d| d.as_ref().ok());
         ui.horizontal(|ui| {
-            let _ = rows::artwork(ui, &self.art, artist.avatar_url.as_deref(), 64.0, "t300x300");
+            let avatar = details.and_then(|(u, _)| u.avatar_url.as_deref()).or(artist.avatar_url.as_deref());
+            let _ = rows::artwork(ui, &self.art, avatar, 84.0, "t300x300");
             ui.add_space(8.0);
             ui.vertical(|ui| {
                 ui.label(RichText::new("Artist").small().color(muted()));
                 ui.heading(&artist.username);
+                if let Some((u, _)) = details {
+                    let mut stats = Vec::new();
+                    if let Some(n) = u.followers_count {
+                        stats.push(format!("{} followers", rows::compact(n)));
+                    }
+                    if let Some(n) = u.track_count {
+                        stats.push(format!("{n} tracks"));
+                    }
+                    if let Some(c) = u.city.as_deref().filter(|c| !c.is_empty()) {
+                        stats.push(c.to_string());
+                    }
+                    ui.label(RichText::new(stats.join("  ·  ")).small().color(muted()));
+                }
                 if !artist.permalink_url.is_empty() {
-                    ui.hyperlink_to("Open on SoundCloud ↗", &artist.permalink_url);
+                    ui.hyperlink_to("Follow / open on SoundCloud ↗", &artist.permalink_url);
                 }
             });
         });
-        ui.add_space(8.0);
-        self.feed_ui(ui, FeedKind::Artist(artist.id), Some("Tracks"), "No public tracks.");
+        ui.add_space(6.0);
+        let mut tab = self.artist_tabs.get(&artist.id).copied().unwrap_or_default();
+        ui.horizontal_wrapped(|ui| {
+            for t in super::ArtistTab::ALL {
+                if ui.selectable_label(tab == t, t.label()).clicked() {
+                    tab = t;
+                }
+            }
+        });
+        self.artist_tabs.insert(artist.id, tab);
+        ui.add_space(6.0);
+        match tab.feed(artist.id) {
+            Some(kind) => {
+                let empty = match tab {
+                    super::ArtistTab::Albums => "No albums.",
+                    super::ArtistTab::Playlists => "No playlists.",
+                    super::ArtistTab::Reposts => "No reposts.",
+                    super::ArtistTab::Related => "No related artists.",
+                    _ => "No public tracks.",
+                };
+                self.feed_ui(ui, kind, None, empty);
+            }
+            None => self.artist_about(ui, artist.id),
+        }
+    }
+
+    /// The About tab: bio and links.
+    fn artist_about(&mut self, ui: &mut egui::Ui, id: u64) {
+        match self.artist_details.get(&id) {
+            None => {
+                ui.spinner();
+            }
+            Some(Err(e)) => {
+                ui.label(RichText::new(format!("Couldn't load the profile: {e}")).color(super::theme::error()));
+            }
+            Some(Ok((user, links))) => {
+                egui::ScrollArea::vertical().id_salt(("about", id)).auto_shrink(false).show(ui, |ui| {
+                    if let Some(name) = user.full_name.as_deref().filter(|n| !n.trim().is_empty()) {
+                        ui.label(RichText::new(name).strong());
+                    }
+                    match user.description.as_deref().map(str::trim).filter(|d| !d.is_empty()) {
+                        Some(bio) => {
+                            ui.add(egui::Label::new(bio).wrap());
+                        }
+                        None => {
+                            ui.label(RichText::new("No bio.").color(muted()));
+                        }
+                    }
+                    if !links.is_empty() {
+                        ui.add_space(12.0);
+                        ui.label(RichText::new("Links").size(16.0).strong());
+                        for l in links.iter().filter(|l| l.url.starts_with("http")) {
+                            let name = match l.title.as_deref().filter(|t| !t.is_empty()) {
+                                Some(t) if !t.eq_ignore_ascii_case(&l.network) => format!("{}: {t}", capitalise(&l.network)),
+                                _ => capitalise(&l.network),
+                            };
+                            ui.hyperlink_to(format!("{name} ↗"), &l.url).on_hover_text(&l.url);
+                        }
+                    }
+                });
+            }
+        }
+    }
+
+    /// Discover: browse by genre.
+    pub(super) fn discover_ui(&mut self, ui: &mut egui::Ui) {
+        use crate::api::SearchKind;
+        use super::library::GENRES;
+        ui.heading("Discover");
+        ui.add_space(6.0);
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
+            for (i, g) in GENRES.iter().enumerate() {
+                if ui.selectable_label(self.discover_genre as usize == i, *g).clicked() {
+                    self.discover_genre = i as u8;
+                }
+            }
+        });
+        ui.add_space(6.0);
+        if self.discover_genre == 0 {
+            ui.label(RichText::new("What's trending on SoundCloud right now.").small().color(muted()));
+            self.discover_kind = SearchKind::Tracks;
+        } else {
+            ui.horizontal(|ui| {
+                for (k, label) in [
+                    (SearchKind::Tracks, "Tracks"),
+                    (SearchKind::Albums, "Albums"),
+                    (SearchKind::People, "Artists"),
+                    (SearchKind::Playlists, "Playlists"),
+                ] {
+                    if ui.selectable_label(self.discover_kind == k, label).clicked() {
+                        self.discover_kind = k;
+                    }
+                }
+            });
+        }
+        ui.add_space(4.0);
+        self.feed_ui(ui, FeedKind::Discover(self.discover_kind, self.discover_genre), None, "Nothing found.");
     }
 
     fn search_ui(&mut self, ui: &mut egui::Ui) {
@@ -257,7 +396,7 @@ impl App {
         ui.add_space(6.0);
         let resp = ui.add(
             egui::TextEdit::singleline(&mut self.search_text)
-                .hint_text("Search tracks, people, playlists...   ( / )")
+                .hint_text("Search tracks, people, playlists, or paste a SoundCloud link   ( / )")
                 .desired_width(f32::INFINITY),
         );
         if self.focus_search {
@@ -295,7 +434,25 @@ impl App {
     /// Everything a row can ask for except Play (which needs the whole list).
     pub(super) fn track_action(&mut self, action: TrackAction, track: Arc<Track>) {
         let title = track.title.clone();
+        // The user's own files have no SoundCloud page, likes or artist.
+        let soundcloud_only = matches!(
+            action,
+            TrackAction::LikeOnSoundCloud
+                | TrackAction::AddToPlaylistOnSoundCloud
+                | TrackAction::OpenOnSoundCloud
+                | TrackAction::OpenTrack
+                | TrackAction::Download
+                | TrackAction::OpenArtist
+                | TrackAction::NotInterested
+                | TrackAction::BlockArtist
+        );
+        if track.local_path.is_some() && soundcloud_only {
+            self.info("That's a file on your PC, so it has no SoundCloud page.");
+            return;
+        }
         match action {
+            TrackAction::AddToLocal(i) => self.add_to_local_playlist(i, &track),
+            TrackAction::RemoveFromLocal => self.remove_from_local_playlist(&track),
             TrackAction::Play => self.play_list(vec![QueueItem { id: track.id, track: Some(track) }], 0),
             TrackAction::LikeOnSoundCloud | TrackAction::AddToPlaylistOnSoundCloud => {
                 // SoundCloud puts likes and playlist edits behind a browser
@@ -345,6 +502,18 @@ impl App {
                 None => {}
             },
             TrackAction::OpenTrack => self.open_track(track),
+            TrackAction::NotInterested => {
+                self.hide_rules.hide_track(&track);
+                self.hide_rules.save();
+                self.rehide();
+                self.info(format!("Hidden “{title}”. Undo in Settings → Hiding."));
+            }
+            TrackAction::BlockArtist => {
+                self.hide_rules.block_artist(track.user.id, &track.user.username);
+                self.hide_rules.save();
+                self.rehide();
+                self.info(format!("Blocked {}. Undo in Settings → Hiding.", track.user.username));
+            }
             TrackAction::OpenArtist => self.open_artist(ArtistInfo {
                 id: track.user.id,
                 username: track.user.username.clone(),
@@ -357,7 +526,7 @@ impl App {
     /// Global shortcut target for "/".
     pub(super) fn focus_search(&mut self) {
         self.nav = Nav::Search;
-        self.pages.clear();
+        self.clear_pages();
         self.focus_search = true;
     }
 }
@@ -390,3 +559,10 @@ fn dev_actions(
             .map(|i| (i, TrackAction::Play));
     }
 }
+
+/// "instagram" -> "Instagram".
+fn capitalise(s: &str) -> String {
+    let mut c = s.chars();
+    c.next().map_or(String::new(), |f| f.to_uppercase().chain(c).collect())
+}
+

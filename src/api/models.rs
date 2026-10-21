@@ -21,6 +21,22 @@ pub struct User {
     pub followers_count: Option<u64>,
     #[serde(default)]
     pub track_count: Option<u64>,
+    /// Profile bio, shown on the artist's About tab.
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub city: Option<String>,
+}
+
+/// A link on an artist's profile (Instagram, Bandcamp, a website...).
+#[derive(Debug, Clone, Deserialize)]
+pub struct WebProfile {
+    #[serde(default)]
+    pub network: String,
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub url: String,
 }
 
 /// The cut-down user object embedded in tracks, playlists and activities.
@@ -88,6 +104,9 @@ pub struct Track {
     pub genre: Option<String>,
     #[serde(default)]
     pub description: Option<String>,
+    /// Set for the user's own music files (never from SoundCloud).
+    #[serde(skip)]
+    pub local_path: Option<String>,
 }
 
 /// A download the artist offers for a track.

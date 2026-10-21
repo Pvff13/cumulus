@@ -32,6 +32,56 @@ pub struct Config {
     pub trim_silence: bool,
     /// Even out loudness between tracks.
     pub match_volume: bool,
+    /// Equalizer on/off and gains in dB (preamp, 60, 230, 910, 3.6k, 14k).
+    pub eq_on: bool,
+    pub eq_gains: [f32; 6],
+    /// Playback speed (1.0 = normal).
+    pub speed: f32,
+    /// Show "Listening to …" on Discord.
+    pub discord_status: bool,
+    /// Discord application id, if not the built-in one.
+    pub discord_app_id: Option<String>,
+    /// Appearance: zoom, main font, layout, custom theme and wallpaper.
+    pub ui_scale: f32,
+    pub font: String,
+    pub player_on_top: bool,
+    pub sidebar_right: bool,
+    pub compact: bool,
+    pub custom_theme: Option<crate::ui::CustomTheme>,
+    /// "off", "picture", "slideshow" or "artwork".
+    pub wallpaper_mode: String,
+    pub wallpaper_path: Option<String>,
+    pub wallpaper_minutes: u32,
+    pub wallpaper_dim: f32,
+    /// Changed in-app shortcuts and global hotkeys: action -> "Ctrl+Alt+P".
+    pub hotkeys: std::collections::BTreeMap<String, String>,
+    pub global_hotkeys: std::collections::BTreeMap<String, String>,
+    /// Visualizer style ("off", "bars", "mirrored", "line").
+    pub visualizer: String,
+    /// OBS: now-playing text file (path, format) and the browser overlay (port).
+    pub obs_text: bool,
+    pub obs_text_path: Option<String>,
+    pub obs_text_format: String,
+    pub obs_overlay: bool,
+    pub obs_port: u16,
+    /// Scrobbling: which plays to send, and user names to show (the logins
+    /// themselves are in the OS credential store).
+    pub scrobble_local: bool,
+    pub lastfm_user: Option<String>,
+    pub listenbrainz_user: Option<String>,
+    /// A Last.fm API key/secret of your own (if this build has none).
+    pub lastfm_api_key: Option<String>,
+    pub lastfm_api_secret: Option<String>,
+    /// Output device name (None = system default).
+    pub audio_device: Option<String>,
+    /// Prefer 160 kbps AAC streams.
+    pub high_quality: bool,
+    /// Skip a track that hasn't moved for this many seconds (0 = off).
+    pub skip_stuck_secs: u32,
+    /// Hiding: "Not interested" tracks (id, label), blocked artists, keywords.
+    pub hidden_tracks: Vec<(u64, String)>,
+    pub blocked_artists: Vec<crate::ui::BlockedArtist>,
+    pub hidden_keywords: Vec<String>,
     /// Path of the build to update from; defaults to this project's
     /// `target/release/cumulus.exe` (set at compile time).
     pub update_source: Option<String>,
@@ -39,7 +89,7 @@ pub struct Config {
 
 impl Default for Config {
     fn default() -> Self {
-        Self { client_id: None, art_cache_mb: 100, volume: 0.8, close_to_tray: true, autoplay: true, popout: false, popout_on_top: true, popout_controls: true, theme: "dark".into(), accent: "purple".into(), crossfade_secs: 0.0, transition: "smooth".into(), trim_silence: true, match_volume: false, update_source: None }
+        Self { client_id: None, art_cache_mb: 100, volume: 0.8, close_to_tray: true, autoplay: true, popout: false, popout_on_top: true, popout_controls: true, theme: "dark".into(), accent: "purple".into(), crossfade_secs: 0.0, transition: "smooth".into(), trim_silence: true, match_volume: false, eq_on: false, eq_gains: [0.0; 6], speed: 1.0, discord_status: false, discord_app_id: None, hidden_tracks: Vec::new(), blocked_artists: Vec::new(), hidden_keywords: Vec::new(), scrobble_local: true, lastfm_user: None, listenbrainz_user: None, lastfm_api_key: None, lastfm_api_secret: None, visualizer: "off".into(), obs_text: false, obs_text_path: None, obs_text_format: "{artist} - {title}".into(), obs_overlay: false, obs_port: 8337, hotkeys: Default::default(), global_hotkeys: Default::default(), ui_scale: 1.0, font: "Default".into(), player_on_top: false, sidebar_right: false, compact: false, custom_theme: None, wallpaper_mode: "off".into(), wallpaper_path: None, wallpaper_minutes: 10, wallpaper_dim: 0.65, audio_device: None, high_quality: true, skip_stuck_secs: 0, update_source: None }
     }
 }
 

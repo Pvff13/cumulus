@@ -49,6 +49,21 @@ impl TrackView {
     }
 }
 
+impl TrackView {
+    /// Drops hidden tracks/playlists from the lists.
+    pub fn hide(&mut self, hidden: &super::hide::Hidden) {
+        if let Section::Loaded(v) = &mut self.related {
+            v.retain(|t| !hidden.track(t));
+        }
+        if let Section::Loaded(v) = &mut self.playlists {
+            v.retain(|p| !hidden.playlist(p));
+        }
+        if let Section::Loaded(v) = &mut self.albums {
+            v.retain(|p| !hidden.playlist(p));
+        }
+    }
+}
+
 /// One part of a track page, fetched separately so each shows when ready.
 pub enum Part {
     Details(Result<Track, ApiError>),
@@ -78,8 +93,11 @@ impl App {
     /// Opens `track`'s page and starts loading its details, related tracks,
     /// albums and playlists.
     pub(super) fn open_track(&mut self, track: Arc<Track>) {
+        if track.local_path.is_some() {
+            return; // a file on this PC has no SoundCloud page
+        }
         let id = track.id;
-        self.pages.push(Page::Track(TrackView::new(track)));
+        self.push_page(Page::Track(TrackView::new(track)));
         self.spawn(move |api, send| send(Msg::TrackPage { id, part: Part::Details(api.track(id)) }));
         self.spawn(move |api, send| send(Msg::TrackPage { id, part: Part::Related(api.related(id)) }));
         self.spawn(move |api, send| send(Msg::TrackPage { id, part: Part::Albums(api.track_albums(id)) }));
@@ -148,7 +166,7 @@ impl App {
 
     pub(super) fn track_ui(&mut self, ui: &mut egui::Ui) {
         if ui.button("← Back").clicked() {
-            self.pages.pop();
+            self.go_back();
             return;
         }
         ui.add_space(8.0);
@@ -234,7 +252,7 @@ impl App {
                 }
             }
 
-            let cx = RowCtx { art: &self.art, liked: &self.liked, current: self.queue.current_id() };
+            let cx = RowCtx { art: &self.art, liked: &self.liked, current: self.queue.current_id(), local_list: false };
 
             ui.add_space(16.0);
             heading(ui, "Related tracks", &related);

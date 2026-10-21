@@ -90,6 +90,20 @@ pub struct Shared {
     pub style: AtomicU8,
     pub trim_silence: AtomicBool,
     pub match_volume: AtomicBool,
+    /// Equalizer: on/off, preamp + 5 band gains (dB, f32 bits), and a
+    /// counter bumped on every change so the callback rebuilds its filters.
+    pub eq_on: AtomicBool,
+    pub eq_gains: [AtomicU32; 6],
+    pub eq_version: AtomicU32,
+    /// Playback speed (f32 bits, 1.0 = normal).
+    pub speed: AtomicU32,
+    /// Output device by name (None = the system default).
+    pub device: Mutex<Option<String>>,
+    /// Visualizer feed: the latest mono samples and their rate (only filled
+    /// while `viz_on`).
+    pub viz_on: AtomicBool,
+    pub viz: Mutex<Vec<f32>>,
+    pub viz_rate: AtomicU32,
 }
 
 impl Shared {
@@ -102,12 +116,22 @@ impl Shared {
             style: AtomicU8::new(0),
             trim_silence: AtomicBool::new(false),
             match_volume: AtomicBool::new(false),
+            eq_on: AtomicBool::new(false),
+            eq_gains: std::array::from_fn(|_| AtomicU32::new(0f32.to_bits())),
+            eq_version: AtomicU32::new(0),
+            speed: AtomicU32::new(1f32.to_bits()),
+            device: Mutex::new(None),
+            viz_on: AtomicBool::new(false),
+            viz: Mutex::new(Vec::new()),
+            viz_rate: AtomicU32::new(0),
         }
     }
 }
 
 enum Cmd {
     Configure(u32),
+    /// Speed changed: reopen the stream at the new effective rate.
+    Reopen,
     Play,
     Pause,
 }
@@ -144,6 +168,11 @@ impl Output {
         let _ = self.tx.send(Cmd::Play);
     }
 
+    /// Re-applies `Shared::speed` (reopens the stream).
+    pub fn reopen(&self) {
+        let _ = self.tx.send(Cmd::Reopen);
+    }
+
     pub fn pause(&self) {
         let _ = self.tx.send(Cmd::Pause);
     }
@@ -156,6 +185,18 @@ fn run(shared: Arc<Shared>, rx: Receiver<Cmd>, current_rate: Arc<AtomicU32>) {
     let mut playing = false;
     for cmd in rx {
         match cmd {
+            Cmd::Reopen if rate != 0 && stream.is_some() => {
+                stream = None;
+                broken.store(false, Ordering::Relaxed);
+                match open(shared.clone(), rate, broken.clone()) {
+                    Ok(s) => {
+                        let _ = if playing { s.play() } else { s.pause() };
+                        stream = Some(s);
+                    }
+                    Err(e) => eprintln!("cumulus audio: {e}"),
+                }
+            }
+            Cmd::Reopen => {}
             Cmd::Configure(r) => {
                 if r == rate && stream.is_some() && !broken.load(Ordering::Relaxed) {
                     continue;
@@ -197,18 +238,30 @@ fn run(shared: Arc<Shared>, rx: Receiver<Cmd>, current_rate: Arc<AtomicU32>) {
     }
 }
 
+/// Opens the device stream for audio at the track's `rate`. Playback speed
+/// works like a record player: the stream claims a faster/slower rate and
+/// Windows' resampler does the rest (pitch follows speed).
 fn open(shared: Arc<Shared>, rate: u32, broken: Arc<AtomicBool>) -> Result<cpal::Stream, String> {
     let host = cpal::default_host();
-    let device = host.default_output_device().ok_or("no audio output device")?;
+    let wanted = shared.device.lock().ok().and_then(|d| d.clone());
+    // The chosen device if it's still there, else the system default.
+    let device = wanted
+        .and_then(|name| host.output_devices().ok()?.find(|d| device_name(d).as_deref() == Some(name.as_str())))
+        .or_else(|| host.default_output_device())
+        .ok_or("no audio output device")?;
+    let speed = f32::from_bits(shared.speed.load(Ordering::Relaxed)).clamp(0.5, 2.0);
+    let rate = (rate as f32 * speed).round() as u32;
     let config = cpal::StreamConfig {
         channels: CHANNELS as u16,
         sample_rate: rate,
         buffer_size: cpal::BufferSize::Default,
     };
+    let mut eq = super::eq::Equalizer::new(rate);
+    shared.viz_rate.store(rate, Ordering::Relaxed);
     device
         .build_output_stream::<f32, _, _>(
             config,
-            move |data, _| fill(&shared, data),
+            move |data, _| fill(&shared, &mut eq, data),
             move |e| {
                 eprintln!("cumulus audio stream: {e}");
                 broken.store(true, Ordering::Relaxed);
@@ -218,8 +271,21 @@ fn open(shared: Arc<Shared>, rate: u32, broken: Arc<AtomicBool>) -> Result<cpal:
         .map_err(|e| e.to_string())
 }
 
-/// Stream callback: copy queued samples out, apply volume, pad with silence.
-fn fill(shared: &Shared, data: &mut [f32]) {
+fn device_name(d: &cpal::Device) -> Option<String> {
+    d.description().ok().map(|d| d.name().to_string())
+}
+
+/// Names of the output devices, for the Settings picker.
+pub fn device_names() -> Vec<String> {
+    let host = cpal::default_host();
+    let mut names: Vec<String> = host.output_devices().map(|ds| ds.filter_map(|d| device_name(&d)).collect()).unwrap_or_default();
+    names.dedup();
+    names
+}
+
+/// Stream callback: copy queued samples out, equalize, apply volume, pad
+/// with silence.
+fn fill(shared: &Shared, eq: &mut super::eq::Equalizer, data: &mut [f32]) {
     let gain = {
         let v = f32::from_bits(shared.volume.load(Ordering::Relaxed));
         v * v
@@ -229,11 +295,24 @@ fn fill(shared: &Shared, data: &mut [f32]) {
     if let Ok(mut q) = shared.queue.try_lock() {
         let n = data.len().min(q.samples.len()) / CHANNELS * CHANNELS;
         for (d, s) in data[..n].iter_mut().zip(q.samples.drain(..n)) {
-            *d = s * gain;
+            *d = s;
         }
         q.consumed += (n / CHANNELS) as u64;
         q.prune();
         filled = n;
+    }
+    eq.process(shared, &mut data[..filled]);
+    if shared.viz_on.load(Ordering::Relaxed) {
+        if let Ok(mut v) = shared.viz.try_lock() {
+            v.extend(data[..filled].chunks_exact(CHANNELS).map(|f| (f[0] + f[1]) * 0.5));
+            let len = v.len();
+            if len > 8192 {
+                v.drain(..len - 4096);
+            }
+        }
+    }
+    for d in &mut data[..filled] {
+        *d *= gain;
     }
     data[filled..].fill(0.0);
 }

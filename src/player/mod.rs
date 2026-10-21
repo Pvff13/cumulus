@@ -7,7 +7,9 @@
 //! `Player::now`.
 
 mod fmp4;
+pub mod eq;
 mod hls;
+pub mod local;
 mod output;
 mod source;
 mod transitions;
@@ -52,6 +54,7 @@ enum Cmd {
 pub struct Player {
     tx: Sender<Cmd>,
     shared: Arc<Shared>,
+    output: Output,
 }
 
 impl Player {
@@ -62,7 +65,7 @@ impl Player {
         let engine = Engine {
             api,
             shared: shared.clone(),
-            output,
+            output: output.clone(),
             events: Box::new(on_event),
             rx,
             current: None,
@@ -84,7 +87,60 @@ impl Player {
             .name("audio-engine".into())
             .spawn(move || engine.run())
             .expect("spawn audio engine");
-        Self { tx, shared }
+        Self { tx, shared, output }
+    }
+
+    /// Equalizer on/off and gains (preamp, then 5 bands, in dB).
+    pub fn set_eq(&self, on: bool, gains: [f32; 6]) {
+        self.shared.eq_on.store(on, Ordering::Relaxed);
+        for (slot, g) in self.shared.eq_gains.iter().zip(gains) {
+            slot.store(g.to_bits(), Ordering::Relaxed);
+        }
+        self.shared.eq_version.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Output device by name (None = system default). Reopens the stream.
+    pub fn set_device(&self, name: Option<String>) {
+        if let Ok(mut d) = self.shared.device.lock() {
+            *d = name;
+        }
+        self.output.reopen();
+    }
+
+    /// Stream quality for tracks opened from now on.
+    pub fn set_high_quality(&self, high: bool) {
+        source::HIGH_QUALITY.store(high, Ordering::Relaxed);
+    }
+
+    /// Turns the visualizer feed on/off.
+    pub fn set_visualizer(&self, on: bool) {
+        self.shared.viz_on.store(on, Ordering::Relaxed);
+        if !on {
+            if let Ok(mut v) = self.shared.viz.lock() {
+                v.clear();
+                v.shrink_to_fit();
+            }
+        }
+    }
+
+    /// Latest mono output samples (oldest first) and their sample rate.
+    pub fn visualizer_samples(&self) -> (Vec<f32>, f32) {
+        let v = self.shared.viz.lock().map(|v| v.clone()).unwrap_or_default();
+        (v, self.shared.viz_rate.load(Ordering::Relaxed) as f32)
+    }
+
+    /// Output devices to choose from.
+    pub fn devices() -> Vec<String> {
+        output::device_names()
+    }
+
+    /// Playback speed, 0.5-2.0 (pitch follows, like a record).
+    pub fn set_speed(&self, speed: f32) {
+        let speed = speed.clamp(0.5, 2.0);
+        let old = f32::from_bits(self.shared.speed.swap(speed.to_bits(), Ordering::Relaxed));
+        if (old - speed).abs() > f32::EPSILON {
+            self.output.reopen();
+        }
     }
 
     /// Plays `item` from `at` seconds, replacing whatever is playing.

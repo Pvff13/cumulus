@@ -153,6 +153,35 @@ impl Agent {
         Ok((resp.into_body().into_reader(), name))
     }
 
+    /// POST a form; returns (status, body). For scrobbling.
+    pub fn post_form(&self, url: &str, form: &[(&str, String)]) -> Result<(u16, String), ApiError> {
+        let pairs: Vec<(&str, &str)> = form.iter().map(|(k, v)| (*k, v.as_str())).collect();
+        let mut resp = self.0.post(url).send_form(pairs).map_err(|e| ApiError::Offline(e.to_string()))?;
+        let status = resp.status().as_u16();
+        Ok((status, resp.body_mut().read_to_string().unwrap_or_default()))
+    }
+
+    /// POST JSON with one extra header; returns (status, body).
+    pub fn post_json(&self, url: &str, header: &str, value: &str, body: &serde_json::Value) -> Result<(u16, String), ApiError> {
+        let mut resp = self.0.post(url).header(header, value).send_json(body).map_err(|e| ApiError::Offline(e.to_string()))?;
+        let status = resp.status().as_u16();
+        Ok((status, resp.body_mut().read_to_string().unwrap_or_default()))
+    }
+
+    /// GET with one extra header; returns (status, body).
+    pub fn get_with_header(&self, url: &str, header: &str, value: &str) -> Result<(u16, String), ApiError> {
+        let mut resp = self.0.get(url).header(header, value).call().map_err(|e| ApiError::Offline(e.to_string()))?;
+        let status = resp.status().as_u16();
+        Ok((status, resp.body_mut().read_to_string().unwrap_or_default()))
+    }
+
+    /// Where `url` ends up after redirects (short on.soundcloud.com links).
+    pub fn final_url(&self, url: &str) -> Result<String, ApiError> {
+        use ureq::ResponseExt;
+        let resp = self.0.get(url).call().map_err(|e| ApiError::Offline(e.to_string()))?;
+        Ok(resp.get_uri().to_string())
+    }
+
     /// GET a public page/script (used for client_id discovery).
     pub fn get_text(&self, url: &str) -> Result<String, ApiError> {
         match self.fetch(url, None)? {

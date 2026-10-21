@@ -1,16 +1,25 @@
 mod desktop;
 mod fonts;
+mod hide;
+pub use hide::BlockedArtist;
+pub use theme::CustomTheme;
 mod home;
+mod hotkeys;
 mod icon;
 mod library;
+mod local_page;
+mod looks;
 mod overlay_ui;
 mod player_bar;
 mod queue;
 mod queue_panel;
 mod rows;
+mod session;
+mod settings;
 mod theme;
 mod track_page;
 mod views;
+mod visualizer;
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -48,12 +57,24 @@ enum Msg {
     Desktop(DesktopEvent),
     Home { cached: bool, result: Result<Vec<Selection>, ApiError> },
     History(Result<Vec<Arc<Track>>, ApiError>),
+    /// A Local files scan finished.
+    LocalScanned(Vec<crate::local::LocalTrack>),
+    /// A global hotkey was pressed (its id).
+    GlobalHotkey(u32),
+    /// A wallpaper picture finished loading.
+    Wallpaper { key: String, image: Result<egui::ColorImage, String> },
+    /// An artist's profile and links (About tab, header numbers).
+    ArtistDetails { id: u64, result: Result<(User, Vec<crate::api::models::WebProfile>), ApiError> },
+    /// Home's "Continue listening" and "Fresh drops" rows.
+    HomeExtras { continue_items: Vec<crate::api::models::HomeItem>, fresh: Vec<Arc<Track>> },
     /// Similar tracks to continue with after `after` (the queue's last track).
     Autoplay { after: u64, result: Result<Vec<Track>, ApiError> },
     /// A newer version is downloaded/verified and ready to install.
     UpdateReady(crate::update::Ready),
     /// Result of pressing "Check for updates".
     UpdateChecked(crate::update::Outcome),
+    /// What a pasted soundcloud.com link points at.
+    Resolved(Result<crate::api::Resolved, ApiError>),
     /// Part of a track page arrived (details, related tracks, playlists...).
     TrackPage { id: u64, part: track_page::Part },
     /// An artist-offered download finished (or failed).
@@ -76,24 +97,46 @@ enum Screen {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Nav {
     Home,
+    Discover,
     Stream,
     Likes,
     Playlists,
     Reposts,
+    History,
+    Following,
+    Local,
     Search,
+    Settings,
 }
 
 impl Nav {
-    const ALL: [Nav; 6] = [Nav::Home, Nav::Stream, Nav::Likes, Nav::Playlists, Nav::Reposts, Nav::Search];
+    const ALL: [Nav; 11] = [
+        Nav::Home,
+        Nav::Discover,
+        Nav::Stream,
+        Nav::Likes,
+        Nav::Playlists,
+        Nav::Reposts,
+        Nav::History,
+        Nav::Following,
+        Nav::Local,
+        Nav::Search,
+        Nav::Settings,
+    ];
 
     fn label(self) -> &'static str {
         match self {
             Nav::Home => "Home",
+            Nav::Discover => "Discover",
             Nav::Stream => "Stream",
             Nav::Likes => "Likes",
             Nav::Playlists => "Playlists",
             Nav::Reposts => "Reposts",
+            Nav::History => "History",
+            Nav::Following => "Following",
+            Nav::Local => "Local files",
             Nav::Search => "Search",
+            Nav::Settings => "Settings",
         }
     }
 
@@ -103,7 +146,9 @@ impl Nav {
             Nav::Likes => Some(FeedKind::Likes),
             Nav::Playlists => Some(FeedKind::Library),
             Nav::Reposts => Some(FeedKind::Reposts),
-            Nav::Home | Nav::Search => None,
+            Nav::History => Some(FeedKind::History),
+            Nav::Following => Some(FeedKind::Following),
+            Nav::Home | Nav::Discover | Nav::Local | Nav::Search | Nav::Settings => None,
         }
     }
 
@@ -113,8 +158,51 @@ impl Nav {
             Nav::Likes => "You haven't liked any tracks yet.",
             Nav::Playlists => "No playlists yet.",
             Nav::Reposts => "You haven't reposted anything yet.",
-            Nav::Home | Nav::Search => "No results.",
+            Nav::History => "Nothing played yet.",
+            Nav::Following => "You don't follow anyone yet.",
+            _ => "No results.",
         }
+    }
+}
+
+/// Tabs on an artist page.
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
+enum ArtistTab {
+    #[default]
+    Tracks,
+    Popular,
+    Albums,
+    Playlists,
+    Reposts,
+    Related,
+    About,
+}
+
+impl ArtistTab {
+    const ALL: [ArtistTab; 7] = [Self::Tracks, Self::Popular, Self::Albums, Self::Playlists, Self::Reposts, Self::Related, Self::About];
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Tracks => "Tracks",
+            Self::Popular => "Popular",
+            Self::Albums => "Albums",
+            Self::Playlists => "Playlists",
+            Self::Reposts => "Reposts",
+            Self::Related => "Related artists",
+            Self::About => "About",
+        }
+    }
+
+    fn feed(self, id: u64) -> Option<FeedKind> {
+        Some(match self {
+            Self::Tracks => FeedKind::Artist(id),
+            Self::Popular => FeedKind::ArtistTop(id),
+            Self::Albums => FeedKind::ArtistAlbums(id),
+            Self::Playlists => FeedKind::ArtistPlaylists(id),
+            Self::Reposts => FeedKind::ArtistReposts(id),
+            Self::Related => FeedKind::ArtistRelated(id),
+            Self::About => return None,
+        })
     }
 }
 
@@ -153,6 +241,10 @@ pub struct App {
     home: home::HomeState,
     feeds: HashMap<FeedKind, Feed>,
     pages: Vec<Page>,
+    /// Pages left with Back, for Forward (Alt+→).
+    forward: Vec<Page>,
+    /// Volume before M muted it.
+    muted_from: Option<f32>,
     paste_open: bool,
     paste: String,
 
@@ -200,8 +292,86 @@ pub struct App {
     match_volume: bool,
     /// The Transitions list in the Crossfade menu is expanded.
     transitions_open: bool,
+    /// Hidden tracks, blocked artists and keywords.
+    hide_rules: hide::Hidden,
+    /// Artist pages: which tab is open, and the profile + links once loaded.
+    artist_tabs: HashMap<u64, ArtistTab>,
+    artist_details: HashMap<u64, Result<(User, Vec<crate::api::models::WebProfile>), String>>,
+    /// Discover page: what to list and which genre.
+    discover_kind: crate::api::SearchKind,
+    discover_genre: u8,
+    /// Local files: the library, its tracks as `Track`s, local playlists,
+    /// which tab is open, the filter, and scan state.
+    local_lib: crate::local::Library,
+    local_tracks: Vec<Arc<Track>>,
+    local_lists: Vec<crate::local::LocalPlaylist>,
+    local_tab: Option<usize>,
+    local_filter: String,
+    local_scanning: bool,
+    local_scanned: bool,
+    /// Scrobbling: the sender, connected accounts, what's being listened to
+    /// (track id, start time, seconds heard, last position, sent), and the
+    /// Last.fm sign-in in progress.
+    scrobbler: Option<std::sync::mpsc::Sender<crate::scrobble::Job>>,
+    lastfm_user: Option<String>,
+    listenbrainz_user: Option<String>,
+    scrobble_local: bool,
+    listening: Option<(u64, u64, f64, f64, bool)>,
+    lastfm_pending: Option<String>,
+    lb_token_input: String,
+    /// Visualizer style and state.
+    viz_style: visualizer::Style,
+    viz: visualizer::Visualizer,
+    /// Mini player: the pop-out settings to restore when leaving it.
+    mini: Option<(bool, bool, bool)>,
+    /// OBS outputs.
+    obs_text_on: bool,
+    obs_text_path: String,
+    obs_text_format: String,
+    obs_text: crate::obs::TextFile,
+    obs_overlay_on: bool,
+    obs_port: u16,
+    obs_overlay: Option<crate::obs::Overlay>,
+    /// Keyboard shortcuts, global hotkeys, and the action being recorded
+    /// in Settings (and whether that's its global key).
+    bindings: hotkeys::Bindings,
+    global_keys: Option<hotkeys::Global>,
+    recording: Option<(hotkeys::Action, bool)>,
+    /// Appearance settings and the loaded wallpaper.
+    looks: looks::Looks,
+    wall: looks::Wallpaper,
+    /// Playback settings mirrored from config.
+    audio_device: Option<String>,
+    audio_devices: Vec<String>,
+    high_quality: bool,
+    skip_stuck_secs: u32,
+    /// Track position last seen moving, for skipping stuck tracks.
+    stuck_check: Option<(u64, f64, Instant)>,
+    start_with_windows: bool,
+    /// Order of the Likes list (anything but Recent loads every page).
+    likes_sort: library::LikesSort,
+    /// Text being typed into Settings → Hiding.
+    keyword_input: String,
     /// The playlist/mix the queue was started from (its tile shows pause).
     playing_list: Option<u64>,
+    /// Restored from the last run: where to start the current track when
+    /// play is pressed.
+    resume_at: Option<f64>,
+    /// Sleep timer: when to stop.
+    sleep: Option<player_bar::Sleep>,
+    /// Discord status: the app id to use (None = not available), whether
+    /// it's on, the background connection, and what was last sent.
+    discord_app_id: Option<String>,
+    discord_on: bool,
+    discord: Option<std::sync::mpsc::Sender<Option<crate::discord::Activity>>>,
+    discord_sent: Option<(u64, u64)>,
+    /// Equalizer (preamp + 5 bands, dB) and playback speed.
+    eq_on: bool,
+    eq_gains: [f32; 6],
+    speed: f32,
+    /// Last saved session, and when, so it's only written when it changed.
+    saved_session: Option<session::Saved>,
+    session_saved_at: Instant,
     /// Window hidden to the tray.
     hidden: bool,
     /// Quit was chosen: let the next close request through.
@@ -224,7 +394,7 @@ const SEARCH_DEBOUNCE: Duration = Duration::from_millis(400);
 
 impl App {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
-        fonts::install(&cc.egui_ctx);
+        fonts::install(&cc.egui_ctx, &Config::load().font);
         let config = Config::load();
         theme::set(&cc.egui_ctx, &config.theme, &config.accent);
         // Debug builds: CUMULUS_DEV_THEME=grey:teal previews colours without saving them.
@@ -233,7 +403,7 @@ impl App {
             theme::set(&cc.egui_ctx, base, accent);
         }
         let overlay_menu = overlay_ui::OverlayMenu::load(&config);
-        let api = Arc::new(Api::new(config.client_id));
+        let api = Arc::new(Api::new(config.client_id.clone()));
         let (tx, rx) = channel();
         let player = {
             let (tx, ctx) = (tx.clone(), cc.egui_ctx.clone());
@@ -243,6 +413,12 @@ impl App {
             })
         };
         player.set_crossfade(config.crossfade_secs);
+        player.set_high_quality(config.high_quality);
+        if config.audio_device.is_some() {
+            player.set_device(config.audio_device.clone());
+        }
+        player.set_eq(config.eq_on, config.eq_gains);
+        player.set_speed(config.speed);
         player.set_style(player::Style::from_key(&config.transition));
         player.set_trim_silence(config.trim_silence);
         player.set_match_volume(config.match_volume);
@@ -250,6 +426,15 @@ impl App {
         #[cfg(debug_assertions)]
         if let Some(secs) = std::env::var("CUMULUS_DEV_CROSSFADE").ok().and_then(|s| s.parse().ok()) {
             player.set_crossfade(secs);
+        }
+        // Debug builds: CUMULUS_DEV_SPEED=1.25 / CUMULUS_DEV_EQ=<preset index> without saving.
+        #[cfg(debug_assertions)]
+        if let Some(speed) = std::env::var("CUMULUS_DEV_SPEED").ok().and_then(|s| s.parse().ok()) {
+            player.set_speed(speed);
+        }
+        #[cfg(debug_assertions)]
+        if let Some(i) = std::env::var("CUMULUS_DEV_EQ").ok().and_then(|s| s.parse::<usize>().ok()) {
+            player.set_eq(true, crate::player::eq::PRESETS[i.min(crate::player::eq::PRESETS.len() - 1)].1);
         }
         #[cfg(debug_assertions)]
         if let Ok(style) = std::env::var("CUMULUS_DEV_TRANSITION") {
@@ -276,6 +461,8 @@ impl App {
             home: home::HomeState::default(),
             feeds: HashMap::new(),
             pages: Vec::new(),
+            forward: Vec::new(),
+            muted_from: None,
             paste_open: false,
             paste: String::new(),
             liked: HashSet::new(),
@@ -307,6 +494,64 @@ impl App {
             match_volume: config.match_volume,
             transitions_open: false,
             playing_list: None,
+            hide_rules: hide::Hidden::load(&config),
+            keyword_input: String::new(),
+            likes_sort: library::LikesSort::Recent,
+            local_lib: crate::local::Library::load(),
+            local_tracks: Vec::new(),
+            local_lists: crate::local::load_playlists(),
+            local_tab: None,
+            local_filter: String::new(),
+            local_scanning: false,
+            local_scanned: false,
+            scrobbler: None,
+            lastfm_user: config.lastfm_user.clone(),
+            listenbrainz_user: config.listenbrainz_user.clone(),
+            scrobble_local: config.scrobble_local,
+            listening: None,
+            lastfm_pending: None,
+            lb_token_input: String::new(),
+            viz_style: visualizer::Style::from_key(&config.visualizer),
+            viz: visualizer::Visualizer::default(),
+            mini: None,
+            obs_text_on: config.obs_text,
+            obs_text_path: config.obs_text_path.clone().unwrap_or_else(crate::obs::default_text_path),
+            obs_text_format: config.obs_text_format.clone(),
+            obs_text: crate::obs::TextFile::default(),
+            obs_overlay_on: config.obs_overlay,
+            obs_port: config.obs_port,
+            obs_overlay: None,
+            bindings: hotkeys::Bindings::load(&config),
+            global_keys: None,
+            recording: None,
+            looks: looks::Looks::load(&config),
+            wall: looks::Wallpaper::default(),
+            audio_device: config.audio_device.clone(),
+            audio_devices: Vec::new(),
+            high_quality: config.high_quality,
+            skip_stuck_secs: config.skip_stuck_secs,
+            stuck_check: None,
+            start_with_windows: crate::autostart::enabled(),
+            artist_tabs: HashMap::new(),
+            artist_details: HashMap::new(),
+            discover_kind: crate::api::SearchKind::Tracks,
+            discover_genre: 0,
+            resume_at: None,
+            sleep: None,
+            discord_app_id: config
+                .discord_app_id
+                .clone()
+                .or_else(|| Some(crate::discord::APP_ID.to_string()))
+                .filter(|id| !id.is_empty()),
+            // Debug builds: CUMULUS_DEV_DISCORD=1 turns it on without saving.
+            discord_on: config.discord_status || (cfg!(debug_assertions) && std::env::var_os("CUMULUS_DEV_DISCORD").is_some()),
+            discord: None,
+            discord_sent: None,
+            eq_on: config.eq_on,
+            eq_gains: config.eq_gains,
+            speed: config.speed,
+            saved_session: None,
+            session_saved_at: Instant::now(),
             hidden: false,
             quitting: false,
             update_checker: Arc::default(),
@@ -317,6 +562,34 @@ impl App {
         #[cfg(debug_assertions)]
         app.apply_dev_env();
         app.check_session();
+        app.apply_looks();
+        app.start_global_hotkeys();
+        app.restart_scrobbler();
+        // Debug builds: CUMULUS_DEV_LOCAL_DIR=<folder> uses a throwaway library.
+        #[cfg(debug_assertions)]
+        if let Ok(dir) = std::env::var("CUMULUS_DEV_LOCAL_DIR") {
+            app.local_lib = crate::local::Library { folders: vec![dir], no_save: true, ..Default::default() };
+        }
+        app.local_tracks = app.local_lib.tracks.iter().map(|t| Arc::new(t.to_track())).collect();
+        app.local_lists_changed();
+        // Debug builds: CUMULUS_DEV_VIZ=bars / CUMULUS_DEV_OBS=1 without saving.
+        #[cfg(debug_assertions)]
+        if let Ok(v) = std::env::var("CUMULUS_DEV_VIZ") {
+            app.viz_style = visualizer::Style::from_key(&v);
+        }
+        #[cfg(debug_assertions)]
+        if std::env::var_os("CUMULUS_DEV_OBS").is_some() {
+            app.obs_overlay_on = true;
+            app.obs_text_on = true;
+        }
+        app.player.set_visualizer(app.viz_style != visualizer::Style::Off);
+        if app.obs_overlay_on {
+            app.set_obs_overlay(true);
+        }
+        // Started with Windows: stay in the tray until clicked.
+        if crate::autostart::started_minimized() && app.desktop.has_tray() {
+            app.set_hidden(true);
+        }
         app
     }
 
@@ -329,6 +602,11 @@ impl App {
             Ok("reposts") => Nav::Reposts,
             Ok("search") => Nav::Search,
             Ok("likes") => Nav::Likes,
+            Ok("history") => Nav::History,
+            Ok("following") => Nav::Following,
+            Ok("discover") => Nav::Discover,
+            Ok("local") => Nav::Local,
+            Ok("settings") => Nav::Settings,
             _ => Nav::Home,
         };
         if let Ok(q) = std::env::var("CUMULUS_DEV_SEARCH") {
@@ -404,11 +682,14 @@ impl App {
     fn sign_out(&mut self, error: Option<String>) {
         self.player.stop();
         self.queue = Queue::default();
+        self.resume_at = None;
+        self.saved_session = None;
+        session::Saved::clear();
         auth::sign_out();
         self.api.set_token(None);
         self.feeds.clear();
         self.home = home::HomeState::default();
-        self.pages.clear();
+        self.clear_pages();
         self.liked.clear();
         self.recheck_on_focus = None;
         self.me = 0;
@@ -423,6 +704,9 @@ impl App {
             FeedKind::Library => Api::library_url(),
             FeedKind::Search(k) => Api::search_url(k, &self.search_query),
             FeedKind::Artist(id) => Api::user_tracks_url(id),
+            FeedKind::History => Api::play_history_url(),
+            FeedKind::Following => format!("/users/{}/followings?limit=50", self.me),
+            other => other.url().unwrap_or_default(),
         }
     }
 
@@ -459,7 +743,7 @@ impl App {
 
     fn open_playlist(&mut self, playlist: Arc<Playlist>) {
         let id = playlist.id;
-        self.pages.push(Page::Playlist(PlaylistView::new(playlist)));
+        self.push_page(Page::Playlist(PlaylistView::new(playlist)));
         self.spawn(move |api, send| send(Msg::Playlist { id, result: library::fetch_playlist(api, id) }));
     }
 
@@ -473,8 +757,38 @@ impl App {
                 _ => None,
             })
             .collect();
-        self.feeds.retain(|k, _| !matches!(k, FeedKind::Artist(id) if !open.contains(id)));
-        self.pages.push(Page::Artist(artist));
+        self.feeds.retain(|k, _| k.artist().is_none_or(|id| open.contains(&id)));
+        let id = artist.id;
+        if !self.artist_details.contains_key(&id) {
+            self.spawn(move |api, send| send(Msg::ArtistDetails { id, result: api.artist(id) }));
+        }
+        self.push_page(Page::Artist(artist));
+    }
+
+    /// Opens a page on top of the current one (clears Forward).
+    fn push_page(&mut self, page: Page) {
+        self.forward.clear();
+        self.pages.push(page);
+    }
+
+    /// Back to the previous page (Alt+← / the Back button).
+    fn go_back(&mut self) {
+        if let Some(page) = self.pages.pop() {
+            self.forward.push(page);
+        }
+    }
+
+    /// Forward again after going back (Alt+→).
+    fn go_forward(&mut self) {
+        if let Some(page) = self.forward.pop() {
+            self.pages.push(page);
+        }
+    }
+
+    /// Leaves every page (switching sidebar sections).
+    fn clear_pages(&mut self) {
+        self.pages.clear();
+        self.forward.clear();
     }
 
     fn playlist_page(&mut self, id: u64) -> Option<&mut PlaylistView> {
@@ -488,6 +802,15 @@ impl App {
     fn run_search(&mut self) {
         self.search_edited = None;
         let q = self.search_text.trim().to_string();
+        // A pasted soundcloud.com link opens what it points at.
+        if crate::api::is_soundcloud_link(&q) {
+            if q != self.search_query {
+                self.search_query = q.clone();
+                self.info("Opening link…");
+                self.spawn(move |api, send| send(Msg::Resolved(api.resolve(&q))));
+            }
+            return;
+        }
         if q != self.search_query {
             self.search_query = q;
             self.feeds.retain(|k, _| !matches!(k, FeedKind::Search(_)));
@@ -500,6 +823,7 @@ impl App {
                 self.me = user.id;
                 self.screen = Screen::SignedIn(user);
                 self.load_liked();
+                self.restore_session();
             }
             Msg::Session(Ok(None)) => self.screen = Screen::SignedOut { error: None },
             Msg::Session(Err(ApiError::Unauthorized)) => self.sign_out(Some(ApiError::Unauthorized.to_string())),
@@ -518,18 +842,50 @@ impl App {
             Msg::Feed { kind, generation, first, cached, result } => {
                 if let Some(feed) = self.feeds.get_mut(&kind).filter(|f| f.generation == generation) {
                     feed.apply(first, cached, result);
+                    let hidden = &self.hide_rules;
+                    feed.rows.retain(|r| !hidden.row(r));
+                    // A sorted Likes list needs all of it: keep loading.
+                    if kind == FeedKind::Likes && self.likes_sort != library::LikesSort::Recent && !cached {
+                        self.likes_sort.sort(&mut feed.rows);
+                        if feed.next.is_some() && !feed.loading {
+                            self.load_feed(FeedKind::Likes, false);
+                        }
+                    }
                 }
             }
             Msg::TrackPage { id, part } => self.apply_track_page(id, part),
+            Msg::Resolved(result) => match result {
+                Ok(crate::api::Resolved::Track(t)) => {
+                    self.status = None;
+                    self.open_track(Arc::new(t));
+                }
+                Ok(crate::api::Resolved::Playlist(p)) => {
+                    self.status = None;
+                    self.open_playlist(Arc::new(p));
+                }
+                Ok(crate::api::Resolved::User(u)) => {
+                    self.status = None;
+                    self.open_artist(ArtistInfo {
+                        id: u.id,
+                        username: u.username,
+                        permalink_url: u.permalink_url,
+                        avatar_url: u.avatar_url,
+                    });
+                }
+                Err(e) => self.error(format!("Couldn't open that link: {e}")),
+            },
             Msg::Playlist { id, result } => {
                 if let Some(view) = self.playlist_page(id) {
                     view.apply_playlist(result);
                 }
             }
             Msg::Tracks { playlist_id, asked, result } => {
+                let hidden = std::mem::take(&mut self.hide_rules);
                 if let Some(view) = self.playlist_page(playlist_id) {
                     view.apply_tracks(&asked, result);
+                    view.entries.retain(|e| !matches!(e, library::Entry::Loaded(t) if hidden.track(t)));
                 }
+                self.hide_rules = hidden;
             }
             Msg::QueueTracks(tracks) => {
                 for t in tracks {
@@ -560,7 +916,25 @@ impl App {
             }
             Msg::Home { result: Err(ApiError::Unauthorized), .. } => self.sign_out(Some(ApiError::Unauthorized.to_string())),
             Msg::Home { cached, result } => self.home_loaded(cached, result),
-            Msg::History(Ok(tracks)) => self.home.history = tracks,
+            Msg::History(Ok(tracks)) => {
+                let hidden = &self.hide_rules;
+                self.home.history = tracks.into_iter().filter(|t| !hidden.track(t)).collect();
+            }
+            Msg::Wallpaper { key, image } => self.wallpaper_loaded(key, image),
+            Msg::LocalScanned(tracks) => self.local_scanned_done(tracks),
+            Msg::GlobalHotkey(id) => {
+                if let Some(a) = self.global_keys.as_ref().and_then(|g| g.action(id)) {
+                    self.run_action(a);
+                }
+            }
+            Msg::ArtistDetails { id, result } => {
+                self.artist_details.insert(id, result.map_err(|e| e.to_string()));
+            }
+            Msg::HomeExtras { continue_items, fresh } => {
+                let hidden = &self.hide_rules;
+                self.home.continue_items = continue_items;
+                self.home.fresh = fresh.into_iter().filter(|t| !hidden.track(t)).collect();
+            }
             // Recently Played then falls back to SoundCloud's own row.
             Msg::History(Err(_e)) => {
                 #[cfg(debug_assertions)]
@@ -633,6 +1007,7 @@ impl App {
             DesktopEvent::Media(_) => {}
             DesktopEvent::ToggleWindow => self.set_hidden(!self.hidden),
             DesktopEvent::Quit => {
+                self.save_session(true);
                 self.quitting = true;
                 self.ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             }
@@ -666,6 +1041,7 @@ impl App {
 
     fn install_update(&mut self) {
         let Some(ready) = self.update_ready.clone() else { return };
+        self.save_session(true);
         match crate::update::apply(&ready.exe) {
             Ok(()) => {
                 self.quitting = true;
@@ -698,6 +1074,7 @@ impl App {
     /// Starts playing `items[index]`, queueing the rest of the list after it.
     fn play_list(&mut self, items: Vec<QueueItem>, index: usize) {
         self.playing_list = None;
+        self.resume_at = None;
         // DRM-only tracks are skipped without trying them.
         let drm: Vec<u64> = items
             .iter()
@@ -779,7 +1156,7 @@ impl App {
         let Ok(tracks) = result else { return };
         let mut added = 0;
         for t in tracks {
-            if t.availability() != crate::api::models::Availability::Playable || self.queue.contains(t.id) {
+            if t.availability() != crate::api::models::Availability::Playable || self.queue.contains(t.id) || self.hide_rules.track(&t) {
                 continue;
             }
             self.queue.add_to_end(QueueItem { id: t.id, track: Some(Arc::new(t)) });
@@ -905,9 +1282,294 @@ impl App {
         });
     }
 
+    /// Keeps the Discord status in step with what's playing: sends when the
+    /// track, play/pause or position (a seek) changes.
+    fn update_discord(&mut self) {
+        let Some(app_id) = self.discord_app_id.clone().filter(|_| self.discord_on) else {
+            if let Some(tx) = self.discord.take() {
+                let _ = tx.send(None);
+            }
+            self.discord_sent = None;
+            return;
+        };
+        let tx = self.discord.get_or_insert_with(|| crate::discord::start(app_id)).clone();
+        let now = self.player.now().filter(|_| !self.player.is_paused());
+        let track = self.queue.current().and_then(|i| i.track.clone());
+        let want = match (now, track) {
+            (Some((id, pos)), Some(t)) if t.id == id => Some(crate::discord::Activity::new(
+                &t.title,
+                &t.user.username,
+                t.artwork().map(|u| crate::api::models::sized_art(u, "t500x500")),
+                &t.permalink_url,
+                pos,
+                t.duration as f64 / 1000.0,
+                self.speed,
+            )),
+            _ => None,
+        };
+        let key = want.as_ref().map(|a| (a.end_ms - a.start_ms, a.start_ms));
+        // Same track and start time (within 2 s): nothing to update.
+        let same = match (self.discord_sent, key) {
+            (None, None) => true,
+            (Some((d1, s1)), Some((d2, s2))) => d1 == d2 && s1.abs_diff(s2) < 2000,
+            _ => false,
+        };
+        if !same {
+            let _ = tx.send(want);
+            self.discord_sent = key;
+        }
+    }
+
+    /// "Show on Discord" in the sidebar.
+    fn discord_toggle(&mut self, ui: &mut egui::Ui) {
+        let available = self.discord_app_id.is_some();
+        let tip = if available {
+            "Shows \"Listening to\" with the song, artist and cover on your Discord profile (needs the Discord desktop app)."
+        } else {
+            "Not set up in this build yet."
+        };
+        let r = ui
+            .add_enabled(available, egui::Checkbox::new(&mut self.discord_on, RichText::new("Show on Discord").small()))
+            .on_hover_text(tip)
+            .on_disabled_hover_text(tip);
+        if r.changed() {
+            let mut config = Config::load();
+            config.discord_status = self.discord_on;
+            config.save();
+        }
+    }
+
+    /// "Skip stuck tracks": if playback is on but the position hasn't moved
+    /// for the set time (a stalled stream), go to the next track.
+    fn skip_if_stuck(&mut self, ctx: &egui::Context) {
+        if self.skip_stuck_secs == 0 || self.player.is_paused() {
+            self.stuck_check = None;
+            return;
+        }
+        let Some(id) = self.queue.current_id() else { return };
+        let pos = self.player.now().filter(|(i, _)| *i == id).map_or(-1.0, |(_, p)| p);
+        match self.stuck_check {
+            Some((sid, spos, since)) if sid == id && (pos - spos).abs() < 0.05 => {
+                if since.elapsed() >= Duration::from_secs(u64::from(self.skip_stuck_secs)) {
+                    self.stuck_check = None;
+                    let title = self.queue_title(id);
+                    self.error(format!("“{title}” got stuck, so it was skipped."));
+                    self.next();
+                }
+            }
+            _ => self.stuck_check = Some((id, pos, Instant::now())),
+        }
+        ctx.request_repaint_after(Duration::from_secs(1));
+    }
+
+    /// Last.fm key/secret: built in, or the user's own from config.
+    fn lastfm_app(&self) -> Option<(String, String)> {
+        let c = Config::load();
+        match (c.lastfm_api_key, c.lastfm_api_secret) {
+            (Some(k), Some(s)) if !k.is_empty() && !s.is_empty() => Some((k, s)),
+            _ if !crate::scrobble::LASTFM_KEY.is_empty() => {
+                Some((crate::scrobble::LASTFM_KEY.to_string(), crate::scrobble::LASTFM_SECRET.to_string()))
+            }
+            _ => None,
+        }
+    }
+
+    /// (Re)starts the scrobbler with the connected accounts (or stops it).
+    fn restart_scrobbler(&mut self) {
+        let lastfm = self.lastfm_app().zip(crate::scrobble::load_secret("lastfm-session")).map(|((k, s), sk)| (k, s, sk));
+        let listenbrainz = crate::scrobble::load_secret("listenbrainz-token");
+        if lastfm.is_none() && listenbrainz.is_none() {
+            self.scrobbler = None;
+            return;
+        }
+        let tx = self.scrobbler.get_or_insert_with(|| crate::scrobble::start(self.api.agent())).clone();
+        let _ = tx.send(crate::scrobble::Job::Accounts(crate::scrobble::Accounts { lastfm, listenbrainz }));
+    }
+
+    /// Counts how long the current track has really been heard and scrobbles
+    /// it once that's enough (half, or 4 minutes).
+    fn track_listening(&mut self) {
+        let Some(tx) = self.scrobbler.clone() else { return };
+        let Some(track) = self.queue.current().and_then(|i| i.track.clone()) else { return };
+        if track.local_path.is_some() && !self.scrobble_local {
+            return;
+        }
+        let pos = self.player.now().filter(|(id, _)| *id == track.id).map(|(_, p)| p);
+        let make_play = || {
+            let (artist, title) = crate::scrobble::split_title(&track.user.username, &track.title);
+            crate::scrobble::Play { artist, title, duration_secs: track.duration / 1000, started: 0, url: track.permalink_url.clone() }
+        };
+        match &mut self.listening {
+            Some((id, ..)) if *id == track.id => {}
+            _ => {
+                // A new track: announce "now playing".
+                self.listening = Some((track.id, crate::scrobble::now(), 0.0, pos.unwrap_or(0.0), false));
+                if pos.is_some() {
+                    let _ = tx.send(crate::scrobble::Job::NowPlaying(make_play()));
+                }
+            }
+        }
+        let Some((_, started, heard, last, sent)) = &mut self.listening else { return };
+        if let Some(p) = pos.filter(|_| !self.player.is_paused()) {
+            let step = p - *last;
+            // Normal playback moves forward a little; seeks don't count.
+            if (0.0..2.0).contains(&step) {
+                *heard += step;
+            }
+            *last = p;
+        }
+        if !*sent && crate::scrobble::heard_enough(*heard, track.duration / 1000) {
+            *sent = true;
+            let mut play = make_play();
+            play.started = *started;
+            let _ = tx.send(crate::scrobble::Job::Scrobble(play));
+        }
+    }
+
+    /// Keeps the OBS text file and overlay up to date.
+    fn update_obs(&mut self) {
+        if !self.obs_text_on && self.obs_overlay.is_none() {
+            return;
+        }
+        let np = self.now_playing();
+        if self.obs_text_on {
+            let text = if np.track_id == 0 { String::new() } else { crate::obs::format_text(&self.obs_text_format, &np.title, &np.artist) };
+            if let Err(e) = self.obs_text.write(&self.obs_text_path, &text) {
+                self.obs_text_on = false;
+                self.error(format!("Couldn't write the OBS text file: {e}"));
+            }
+        }
+        if let Some(o) = &self.obs_overlay {
+            o.set(crate::obs::Now {
+                title: np.title,
+                artist: np.artist,
+                artwork: np.artwork,
+                playing: np.playing,
+                position: np.position,
+                duration: np.duration,
+                accent: theme::to_hex(accent()),
+            });
+        }
+    }
+
+    /// Starts/stops the OBS browser overlay server.
+    fn set_obs_overlay(&mut self, on: bool) {
+        if !on {
+            self.obs_overlay = None; // the listener thread keeps the port until exit; harmless
+            return;
+        }
+        if self.obs_overlay.as_ref().is_some_and(|o| o.port == self.obs_port) {
+            return;
+        }
+        match crate::obs::Overlay::start(self.obs_port) {
+            Ok(o) => self.obs_overlay = Some(o),
+            Err(e) => {
+                self.obs_overlay_on = false;
+                self.error(format!("Couldn't start the OBS overlay: {e}"));
+            }
+        }
+    }
+
+    /// Mini player: just the always-on-top pop-out with controls.
+    fn set_mini(&mut self, on: bool) {
+        if on && self.mini.is_none() {
+            let m = &mut self.overlay_menu;
+            self.mini = Some((m.popout, m.on_top, m.controls));
+            (m.popout, m.on_top, m.controls) = (true, true, true);
+            self.set_hidden(true);
+        } else if !on {
+            if let Some((popout, on_top, controls)) = self.mini.take() {
+                let m = &mut self.overlay_menu;
+                (m.popout, m.on_top, m.controls) = (popout, on_top, controls);
+            }
+            self.set_hidden(false);
+        }
+    }
+
+    /// Registers the global hotkeys (only if any are set).
+    fn start_global_hotkeys(&mut self) {
+        if self.bindings.global.values().all(String::is_empty) && self.global_keys.is_none() {
+            return;
+        }
+        if self.global_keys.is_none() {
+            let (tx, ctx) = (self.tx.clone(), self.ctx.clone());
+            self.global_keys = Some(hotkeys::Global::new(move |id| {
+                let _ = tx.send(Msg::GlobalHotkey(id));
+                ctx.request_repaint();
+            }));
+        }
+        let failed = self.global_keys.as_mut().map(|g| g.set(&self.bindings)).unwrap_or_default();
+        if !failed.is_empty() {
+            self.error(format!("Another app already uses {}: pick a different global key.", failed.join(", ")));
+        }
+    }
+
+    /// Re-applies the hiding rules to everything already loaded.
+    fn rehide(&mut self) {
+        let hidden = &self.hide_rules;
+        for feed in self.feeds.values_mut() {
+            feed.rows.retain(|r| !hidden.row(r));
+        }
+        self.home.history.retain(|t| !hidden.track(t));
+        for page in &mut self.pages {
+            match page {
+                Page::Playlist(v) => v.entries.retain(|e| !matches!(e, library::Entry::Loaded(t) if hidden.track(t))),
+                Page::Track(v) => v.hide(hidden),
+                Page::Artist(_) => {}
+            }
+        }
+    }
+
+    /// Puts back the queue from the last run, paused at the same spot.
+    fn restore_session(&mut self) {
+        if !self.queue.is_empty() {
+            return;
+        }
+        let Some(saved) = session::Saved::load() else { return };
+        // Local files come back from the library (dropped if they're gone).
+        let mut current = saved.current;
+        let mut items = Vec::new();
+        for (i, &id) in saved.ids.iter().enumerate() {
+            if crate::local::is_local(id) {
+                match self.local_lib.find(id) {
+                    Some(t) => items.push(QueueItem { id, track: Some(Arc::new(t.to_track())) }),
+                    None if i < saved.current => current = current.saturating_sub(1),
+                    None => {}
+                }
+            } else {
+                items.push(QueueItem { id, track: None });
+            }
+        }
+        if items.is_empty() {
+            return;
+        }
+        self.queue.set(items, current);
+        self.queue.repeat = saved.repeat();
+        self.resume_at = Some(saved.position);
+        self.saved_session = Some(saved);
+    }
+
+    /// Writes the session every few seconds while it changes (or right now).
+    fn save_session(&mut self, now: bool) {
+        if !now && self.session_saved_at.elapsed() < Duration::from_secs(5) {
+            return;
+        }
+        self.session_saved_at = Instant::now();
+        let position = match self.player.now() {
+            Some((id, pos)) if Some(id) == self.queue.current_id() => pos,
+            _ => self.resume_at.unwrap_or(0.0),
+        };
+        let Some(saved) = session::Saved::of(&self.queue, position) else { return };
+        if self.saved_session.as_ref() != Some(&saved) {
+            saved.save();
+            self.saved_session = Some(saved);
+        }
+    }
+
     /// Fetches details for queue entries only known by id (once each).
     fn fetch_queue_tracks(&mut self, ids: Vec<u64>) {
-        let ids: Vec<u64> = ids.into_iter().filter(|id| self.queue_requested.insert(*id)).collect();
+        // Local files are always complete; only SoundCloud ids are fetched.
+        let ids: Vec<u64> = ids.into_iter().filter(|id| !crate::local::is_local(*id) && self.queue_requested.insert(*id)).collect();
         for chunk in ids.chunks(crate::api::IDS_PER_REQUEST) {
             let chunk = chunk.to_vec();
             self.spawn(move |api, send| {
@@ -967,12 +1629,14 @@ impl App {
     }
 
     fn signed_in_ui(&mut self, ui: &mut egui::Ui, user: &User) {
-        egui::Panel::bottom("player")
+        let player = if self.looks.player_on_top { egui::Panel::top("player") } else { egui::Panel::bottom("player") };
+        player
             .resizable(false)
             .exact_size(player_bar::HEIGHT)
             .frame(player_bar::bar_frame())
             .show(ui, |ui| self.player_bar(ui));
-        egui::Panel::left("sidebar")
+        let side = if self.looks.sidebar_right { egui::Panel::right("sidebar") } else { egui::Panel::left("sidebar") };
+        side
             .resizable(false)
             .exact_size(200.0)
             .frame(egui::Frame::NONE.fill(sidebar()).inner_margin(12.0))
@@ -982,9 +1646,9 @@ impl App {
                 for nav in Nav::ALL {
                     let selected = self.nav == nav && self.pages.is_empty();
                     let text = RichText::new(nav.label()).size(15.0);
-                    if ui.add_sized([176.0, 30.0], egui::Button::selectable(selected, text)).clicked() {
+                    if ui.add_sized([176.0, 27.0], egui::Button::selectable(selected, text)).clicked() {
                         self.nav = nav;
-                        self.pages.clear();
+                        self.clear_pages();
                     }
                 }
                 ui.with_layout(Layout::bottom_up(Align::Min), |ui| {
@@ -1023,26 +1687,21 @@ impl App {
                         }
                     }
                     ui.add_space(4.0);
-                    if self.desktop.has_tray()
-                        && ui
-                            .checkbox(&mut self.close_to_tray, RichText::new("Close to tray, keep playing").small())
-                            .changed()
-                    {
-                        let mut config = Config::load();
-                        config.close_to_tray = self.close_to_tray;
-                        config.save();
-                    }
                     self.crossfade_menu(ui);
                     if let Some((base, accent)) = theme::appearance_menu(ui) {
                         theme::set(ui.ctx(), base, accent);
+                        self.looks.custom = None;
                         let mut config = Config::load();
                         (config.theme, config.accent) = (base.into(), accent.into());
+                        config.custom_theme = None;
                         config.save();
                     }
-                    if ui.small_button("Sign out").clicked() {
-                        self.sign_out(None);
-                    }
-                    ui.hyperlink_to(RichText::new(&user.username).strong(), &user.permalink_url);
+                    ui.horizontal(|ui| {
+                        ui.hyperlink_to(RichText::new(&user.username).strong(), &user.permalink_url);
+                        if ui.small_button("Sign out").clicked() {
+                            self.sign_out(None);
+                        }
+                    });
                 });
             });
         if self.show_queue {
@@ -1055,6 +1714,7 @@ impl App {
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE.inner_margin(egui::Margin::symmetric(20, 16)))
             .show(ui, |ui| {
+                self.paint_wallpaper(ui);
                 self.status_banner(ui);
                 self.content_ui(ui);
             });
@@ -1089,6 +1749,12 @@ impl eframe::App for App {
             self.handle(msg);
         }
         self.sync_playback();
+        self.update_obs();
+        self.track_listening();
+        self.skip_if_stuck(ctx);
+        self.sleep_tick(ctx);
+        self.update_discord();
+        self.save_session(false);
         self.check_for_update();
         let current = self.queue.current().and_then(|i| i.track.clone());
         let now = self.player.now();
@@ -1120,6 +1786,8 @@ impl eframe::App for App {
         }
         if matches!(self.screen, Screen::SignedIn(_)) {
             self.shortcuts(&ctx);
+            self.handle_dropped_files(&ctx);
+            self.drop_hint(&ctx);
         }
         // While playing, refresh the progress bar a few times a second.
         if !self.player.is_paused() {

@@ -138,6 +138,8 @@ impl App {
         let mut closed = false;
         let mut action = None;
         let mut settings_changed = false;
+        let mut expand = false;
+        let mini = self.mini.is_some();
         let menu = &mut self.overlay_menu;
         ctx.show_viewport_immediate(ViewportId::from_hash_of("cumulus-now-playing"), builder, |ui, _class| {
             if ui.ctx().input(|i| i.viewport().close_requested()) {
@@ -147,6 +149,10 @@ impl App {
                 // Right-click anywhere on the pop-out for its options.
                 let bg = ui.interact(ui.max_rect(), ui.scope_id().with("popout-bg"), Sense::click());
                 egui::Popup::context_menu(&bg).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).show(|ui| {
+                    if mini && ui.button("⤢  Back to the full window").clicked() {
+                        expand = true;
+                        ui.close();
+                    }
                     settings_changed |= toggles(ui, menu);
                     ui.separator();
                     if ui.button("Close pop-out").clicked() {
@@ -155,7 +161,16 @@ impl App {
                     }
                 });
                 let controls = menu.controls.then_some(&mut volume);
+                let full = ui.max_rect();
                 action = now_playing_card(ui, &art, &np, controls);
+                // Mini player: a way back to the full window.
+                if mini {
+                    let r = egui::Rect::from_min_size(full.right_top() + vec2(-14.0, -10.0), vec2(22.0, 18.0));
+                    let b = egui::Button::new(RichText::new("⤢").size(13.0).color(muted())).frame(false);
+                    if ui.put(r, b).on_hover_text("Back to the full window").clicked() {
+                        expand = true;
+                    }
+                }
             });
             if np.playing {
                 ui.ctx().request_repaint_after(Duration::from_millis(500));
@@ -168,11 +183,16 @@ impl App {
             Some(PopAction::Volume { save }) => self.set_volume(volume, save),
             None => {}
         }
+        // Leaving the mini player restores the pop-out as it was.
+        if (closed || expand) && self.mini.is_some() {
+            self.set_mini(false);
+            return;
+        }
         if closed {
             self.overlay_menu.popout = false;
             settings_changed = true;
         }
-        if settings_changed {
+        if settings_changed && self.mini.is_none() {
             self.overlay_menu.save();
         }
     }

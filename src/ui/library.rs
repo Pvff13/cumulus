@@ -18,14 +18,132 @@ pub enum FeedKind {
     Search(SearchKind),
     /// An artist's uploads.
     Artist(u64),
+    /// Recently played tracks.
+    History,
+    /// People the user follows.
+    Following,
+    /// An artist page's other tabs.
+    ArtistTop(u64),
+    ArtistAlbums(u64),
+    ArtistPlaylists(u64),
+    ArtistReposts(u64),
+    ArtistRelated(u64),
+    /// Discover: what to list and the genre (index into `GENRES`, 0 = trending).
+    Discover(SearchKind, u8),
+}
+
+/// Genres for Discover (index 0 is SoundCloud's overall trending chart).
+pub const GENRES: [&str; 25] = [
+    "Trending",
+    "Electronic",
+    "Hip Hop",
+    "House",
+    "Techno",
+    "Drum & Bass",
+    "Dubstep",
+    "Trap",
+    "Phonk",
+    "Hyperpop",
+    "Breakcore",
+    "Hardstyle",
+    "Jersey Club",
+    "Ambient",
+    "Lofi",
+    "Pop",
+    "R&B",
+    "Rock",
+    "Indie",
+    "Metal",
+    "Jazz",
+    "Classical",
+    "Reggaeton",
+    "Afrobeats",
+    "Dancehall",
+];
+
+impl FeedKind {
+    /// The artist an artist-page list belongs to.
+    pub fn artist(self) -> Option<u64> {
+        match self {
+            Self::Artist(id)
+            | Self::ArtistTop(id)
+            | Self::ArtistAlbums(id)
+            | Self::ArtistPlaylists(id)
+            | Self::ArtistReposts(id)
+            | Self::ArtistRelated(id) => Some(id),
+            _ => None,
+        }
+    }
+
+    /// First-page URL for the lists that don't depend on who's signed in.
+    pub fn url(self) -> Option<String> {
+        let g = |i: u8| crate::api::encode(&GENRES[i as usize].to_lowercase());
+        Some(match self {
+            Self::ArtistTop(id) => format!("/users/{id}/toptracks?limit=50"),
+            Self::ArtistAlbums(id) => format!("/users/{id}/albums?limit=50"),
+            Self::ArtistPlaylists(id) => format!("/users/{id}/playlists_without_albums?limit=50"),
+            Self::ArtistReposts(id) => format!("/stream/users/{id}/reposts?limit=50"),
+            Self::ArtistRelated(id) => format!("/users/{id}/relatedartists?limit=50"),
+            Self::Discover(_, 0) => "/charts?kind=trending&genre=soundcloud:genres:all-music&limit=50".to_string(),
+            Self::Discover(SearchKind::Tracks, i) => format!("/search/tracks?q=*&filter.genre_or_tag={}&sort=popular&limit=50", g(i)),
+            Self::Discover(SearchKind::Albums, i) => format!("/search/albums?q=*&filter.genre_or_tag={}&limit=50", g(i)),
+            Self::Discover(SearchKind::People, i) => format!("/search/users?q=*&filter.genre_or_tag={}&limit=50", g(i)),
+            Self::Discover(SearchKind::Playlists, i) => {
+                format!("/search/playlists_without_albums?q=*&filter.genre_or_tag={}&limit=50", g(i))
+            }
+            _ => return None,
+        })
+    }
 }
 
 impl FeedKind {
     /// Only the sidebar lists are saved for offline / instant start-up.
     fn cache_key(self, user_id: u64) -> Option<String> {
         match self {
-            Self::Likes | Self::Stream | Self::Reposts | Self::Library => Some(format!("{self:?}-{user_id}")),
-            Self::Search(_) | Self::Artist(_) => None,
+            Self::Likes | Self::Stream | Self::Reposts | Self::Library | Self::History | Self::Following => {
+                Some(format!("{self:?}-{user_id}"))
+            }
+            _ => None,
+        }
+    }
+}
+
+/// How the Likes list is ordered.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum LikesSort {
+    #[default]
+    Recent,
+    Title,
+    Artist,
+    Longest,
+    MostPlayed,
+}
+
+impl LikesSort {
+    pub const ALL: [LikesSort; 5] = [Self::Recent, Self::Title, Self::Artist, Self::Longest, Self::MostPlayed];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Recent => "Recently liked",
+            Self::Title => "Title (A-Z)",
+            Self::Artist => "Artist (A-Z)",
+            Self::Longest => "Longest first",
+            Self::MostPlayed => "Most played",
+        }
+    }
+
+    /// Sorts track rows in place (other rows keep their place at the end).
+    pub fn sort(self, rows: &mut [Row]) {
+        let key = |r: &Row| match r {
+            Row::Track { track, .. } => Some(track.clone()),
+            _ => None,
+        };
+        match self {
+            Self::Recent => {}
+            Self::Title => rows.sort_by_cached_key(|r| key(r).map(|t| t.title.to_lowercase())),
+            Self::Artist => rows.sort_by_cached_key(|r| key(r).map(|t| (t.user.username.to_lowercase(), t.title.to_lowercase()))),
+            Self::Longest => rows.sort_by_cached_key(|r| std::cmp::Reverse(key(r).map(|t| t.duration))),
+            Self::MostPlayed => rows.sort_by_cached_key(|r| std::cmp::Reverse(key(r).and_then(|t| t.playback_count))),
         }
     }
 }
@@ -111,17 +229,23 @@ pub fn cached_first_page(kind: FeedKind, user_id: u64) -> Option<RowPage> {
 
 fn parse_page(kind: FeedKind, body: &str) -> Result<RowPage, ApiError> {
     match kind {
-        FeedKind::Search(SearchKind::Tracks) | FeedKind::Artist(_) => {
+        FeedKind::Search(SearchKind::Tracks) | FeedKind::Artist(_) | FeedKind::ArtistTop(_) | FeedKind::Discover(SearchKind::Tracks, 1..) => {
             let page: Page<Track> = client::parse(body)?;
             let rows = page.collection.into_iter().map(|t| Row::Track { track: Arc::new(t), note: None }).collect();
             return Ok(RowPage { rows, next: page.next_href });
         }
-        FeedKind::Search(SearchKind::People) => {
+        FeedKind::Search(SearchKind::People)
+        | FeedKind::Following
+        | FeedKind::ArtistRelated(_)
+        | FeedKind::Discover(SearchKind::People, 1..) => {
             let page: Page<User> = client::parse(body)?;
             let rows = page.collection.into_iter().map(|u| Row::User(Arc::new(u))).collect();
             return Ok(RowPage { rows, next: page.next_href });
         }
-        FeedKind::Search(SearchKind::Playlists | SearchKind::Albums) => {
+        FeedKind::Search(SearchKind::Playlists | SearchKind::Albums)
+        | FeedKind::ArtistAlbums(_)
+        | FeedKind::ArtistPlaylists(_)
+        | FeedKind::Discover(SearchKind::Playlists | SearchKind::Albums, 1..) => {
             let page: Page<Playlist> = client::parse(body)?;
             let rows = page
                 .collection
@@ -130,9 +254,16 @@ fn parse_page(kind: FeedKind, body: &str) -> Result<RowPage, ApiError> {
                 .collect();
             return Ok(RowPage { rows, next: page.next_href });
         }
-        FeedKind::Likes | FeedKind::Stream | FeedKind::Reposts | FeedKind::Library => {}
+        FeedKind::Likes
+        | FeedKind::Stream
+        | FeedKind::Reposts
+        | FeedKind::ArtistReposts(_)
+        | FeedKind::Library
+        | FeedKind::History
+        | FeedKind::Discover(_, 0) => {}
     }
-    if kind == FeedKind::Likes {
+    // Likes, play history and the trending chart are all {track, ...} entries.
+    if matches!(kind, FeedKind::Likes | FeedKind::History | FeedKind::Discover(_, 0)) {
         let page: Page<TrackLike> = client::parse(body)?;
         let rows = page
             .collection

@@ -10,6 +10,19 @@ pub use client::{Api, ApiError};
 use models::{Page, Playlist, Track, User};
 
 const PAGE: u32 = 50;
+
+/// What a pasted soundcloud.com link turned out to be.
+pub enum Resolved {
+    Track(Track),
+    Playlist(Playlist),
+    User(User),
+}
+
+/// Looks like a SoundCloud link rather than search words.
+pub fn is_soundcloud_link(text: &str) -> bool {
+    let t = text.trim().to_ascii_lowercase();
+    !t.contains(' ') && (t.contains("soundcloud.com/") || t.contains("on.soundcloud.com/"))
+}
 /// `/tracks?ids=` accepts at most this many ids.
 pub const IDS_PER_REQUEST: usize = 50;
 
@@ -108,6 +121,37 @@ impl Api {
         Ok(page.collection)
     }
 
+    /// What a soundcloud.com link points at.
+    pub fn resolve(&self, link: &str) -> Result<Resolved, ApiError> {
+        let mut link = link.trim().to_string();
+        if !link.starts_with("http") {
+            link = format!("https://{link}");
+        }
+        // Share links are short redirects: follow them to the real page.
+        if link.contains("on.soundcloud.com/") {
+            link = self.agent().final_url(&link)?;
+        }
+        // Tracking bits (?si=..., ?utm_...) and fragments aren't part of the page.
+        let link = link.split(['?', '#']).next().unwrap_or(&link).trim_end_matches('/');
+        let value: serde_json::Value = self.get(&format!("/resolve?url={}", encode(link)))?;
+        fn parse<T: serde::de::DeserializeOwned>(v: serde_json::Value) -> Result<T, ApiError> {
+            serde_json::from_value(v).map_err(|e| ApiError::Other(e.to_string()))
+        }
+        match value["kind"].as_str() {
+            Some("track") => Ok(Resolved::Track(parse(value)?)),
+            Some("playlist") | Some("system-playlist") => Ok(Resolved::Playlist(parse(value)?)),
+            Some("user") => Ok(Resolved::User(parse(value)?)),
+            _ => Err(ApiError::NotFound),
+        }
+    }
+
+    /// An artist's full profile and their links.
+    pub fn artist(&self, user_id: u64) -> Result<(User, Vec<models::WebProfile>), ApiError> {
+        let user = self.get(&format!("/users/{user_id}"))?;
+        let links = self.get(&format!("/users/soundcloud:users:{user_id}/web-profiles")).unwrap_or_default();
+        Ok((user, links))
+    }
+
     /// Tracks the user played recently, newest first.
     pub fn play_history_url() -> String {
         "/me/play-history/tracks?limit=50".to_string()
@@ -148,7 +192,7 @@ pub enum SearchKind {
 }
 
 /// Percent-encodes a query-string value.
-fn encode(s: &str) -> String {
+pub(crate) fn encode(s: &str) -> String {
     s.bytes()
         .map(|b| match b {
             b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => (b as char).to_string(),
@@ -162,5 +206,30 @@ mod tests {
     #[test]
     fn query_encoding() {
         assert_eq!(super::encode("lo fi & chill/ñ"), "lo%20fi%20%26%20chill%2F%C3%B1");
+    }
+}
+
+#[cfg(test)]
+mod link_tests {
+    use super::*;
+
+    #[test]
+    fn spots_links() {
+        assert!(is_soundcloud_link("https://soundcloud.com/beansclub/derail"));
+        assert!(is_soundcloud_link("soundcloud.com/beansclub"));
+        assert!(is_soundcloud_link("https://on.soundcloud.com/AbC123"));
+        assert!(!is_soundcloud_link("beansclub derail"));
+        assert!(!is_soundcloud_link("soundcloud.com is cool"));
+    }
+
+    /// Hits SoundCloud with the saved login.
+    #[test]
+    #[ignore]
+    fn resolves_links() {
+        let api = Api::new(crate::config::Config::load().client_id);
+        api.set_token(crate::auth::load_token().ok().flatten());
+        assert!(matches!(api.resolve("https://soundcloud.com/beansclub/derail?si=abc&utm_source=x"), Ok(Resolved::Track(t)) if t.id == 1763054226));
+        assert!(matches!(api.resolve("soundcloud.com/beansclub"), Ok(Resolved::User(u)) if u.id == 413160537));
+        assert!(matches!(api.resolve("https://soundcloud.com/user-648925967/sets/shit-i-liked"), Ok(Resolved::Playlist(_))));
     }
 }

@@ -11,12 +11,26 @@ use super::theme::{accent, hover, muted, surface, tag as tag_colour};
 use crate::api::models::{Availability, Download, Playlist, Track, User, sized_art};
 use crate::cache::art::ArtCache;
 
-pub const ROW_HEIGHT: f32 = 52.0;
-const ART: f32 = 40.0;
+/// Compact layout: smaller rows and artwork.
+pub static COMPACT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+fn is_compact() -> bool {
+    COMPACT.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Height of a list row.
+pub fn row_height() -> f32 {
+    if is_compact() { 40.0 } else { 52.0 }
+}
+
+/// Artwork size in list rows.
+fn art_size() -> f32 {
+    if is_compact() { 30.0 } else { 40.0 }
+}
 
 /// Allocates a full-width row and returns (response, inner rect).
 fn row_frame(ui: &mut egui::Ui) -> (Response, Rect) {
-    let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), ROW_HEIGHT), Sense::click());
+    let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), row_height()), Sense::click());
     if resp.hovered() {
         ui.painter().rect_filled(rect, 6.0, hover());
     }
@@ -36,7 +50,7 @@ pub fn artwork(ui: &mut egui::Ui, art: &ArtCache, url: Option<&str>, size: f32, 
 
 /// Artwork with a ▶ overlay while the row is hovered. Returns true if clicked.
 fn play_artwork(ui: &mut egui::Ui, art: &ArtCache, url: Option<&str>, row_hovered: bool, glyph: &str) -> bool {
-    let resp = artwork(ui, art, url, ART, "t67x67");
+    let resp = artwork(ui, art, url, art_size(), "t67x67");
     if row_hovered {
         let r = resp.rect;
         ui.painter().rect_filled(r, 4.0, egui::Color32::from_black_alpha(140));
@@ -97,6 +111,8 @@ pub struct RowCtx<'a> {
     pub liked: &'a HashSet<u64>,
     /// The track currently playing, highlighted.
     pub current: Option<u64>,
+    /// Rows of a local playlist (the menu offers "Remove from this playlist").
+    pub local_list: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -115,6 +131,14 @@ pub enum TrackAction {
     Download,
     /// The track's own page (details, related tracks, playlists).
     OpenTrack,
+    /// Hide this track everywhere.
+    NotInterested,
+    /// Hide everything by this artist.
+    BlockArtist,
+    /// Add to local playlist n (None = a new one).
+    AddToLocal(Option<usize>),
+    /// Remove from the local playlist being shown.
+    RemoveFromLocal,
 }
 
 /// A track row: ▶ on the artwork (or double-click) plays, the heart opens
@@ -127,7 +151,7 @@ pub fn track_row(ui: &mut egui::Ui, cx: &RowCtx<'_>, track: &Track, note: Option
     let availability = track.availability();
     let liked = cx.liked.contains(&track.id);
     resp.context_menu(|ui| {
-        if let Some(a) = track_menu(ui, track, liked) {
+        if let Some(a) = track_menu(ui, track, liked, cx.local_list) {
             action = Some(a);
         }
     });
@@ -202,6 +226,9 @@ pub fn track_row(ui: &mut egui::Ui, cx: &RowCtx<'_>, track: &Track, note: Option
 /// SoundCloud). Returns true when an offered download is clicked.
 fn download_button(ui: &mut egui::Ui, track: &Track) -> bool {
     let (rect, resp) = ui.allocate_exact_size(egui::vec2(22.0, 22.0), Sense::click());
+    if track.local_path.is_some() {
+        return false; // already on this PC
+    }
     let offer = track.download();
     let color = match (&offer, resp.hovered()) {
         (Some(_), true) => accent().gamma_multiply(1.25),
@@ -232,7 +259,7 @@ pub fn host(url: &str) -> &str {
 }
 
 /// Right-click menu for a track.
-pub fn track_menu(ui: &mut egui::Ui, track: &Track, liked: bool) -> Option<TrackAction> {
+pub fn track_menu(ui: &mut egui::Ui, track: &Track, liked: bool, in_local_list: bool) -> Option<TrackAction> {
     let mut action = None;
     let mut item = |ui: &mut egui::Ui, text: &str, a: TrackAction| {
         if ui.button(text).clicked() {
@@ -258,6 +285,40 @@ pub fn track_menu(ui: &mut egui::Ui, track: &Track, liked: bool) -> Option<Track
     if ui.button("Open on SoundCloud ↗").clicked() {
         ui.ctx().open_url(OpenUrl::new_tab(&track.permalink_url));
         ui.close();
+    }
+    ui.separator();
+    ui.menu_button("Add to local playlist", |ui| {
+        let names = super::local_page::PLAYLIST_NAMES.read().map(|n| n.clone()).unwrap_or_default();
+        for (i, name) in names.iter().enumerate() {
+            if ui.button(name).clicked() {
+                action = Some(TrackAction::AddToLocal(Some(i)));
+                ui.close();
+            }
+        }
+        if !names.is_empty() {
+            ui.separator();
+        }
+        if ui.button("New playlist").clicked() {
+            action = Some(TrackAction::AddToLocal(None));
+            ui.close();
+        }
+    });
+    if in_local_list {
+        if ui.button("Remove from this playlist").clicked() {
+            action = Some(TrackAction::RemoveFromLocal);
+            ui.close();
+        }
+    }
+    if track.local_path.is_none() {
+        ui.separator();
+        if ui.button("Not interested").clicked() {
+            action = Some(TrackAction::NotInterested);
+            ui.close();
+        }
+        if ui.button(format!("Block {}", track.user.username)).clicked() {
+            action = Some(TrackAction::BlockArtist);
+            ui.close();
+        }
     }
     action
 }
@@ -303,7 +364,7 @@ pub fn user_row(ui: &mut egui::Ui, art: &ArtCache, user: &User) -> bool {
     }
     ui.label(RichText::new(stats.join(" · ")).color(muted()));
     ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
-        let _ = artwork(ui, art, user.avatar_url.as_deref(), ART, "t67x67");
+        let _ = artwork(ui, art, user.avatar_url.as_deref(), art_size(), "t67x67");
         ui.add_space(4.0);
         ui.add(egui::Label::new(RichText::new(&user.username).strong()).truncate().selectable(false));
     });
@@ -331,7 +392,7 @@ pub fn playlist_row(ui: &mut egui::Ui, art: &ArtCache, playlist: &Playlist, note
         tag(ui, "Album");
     }
     ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
-        artwork(ui, art, playlist.artwork(), ART, "t67x67");
+        artwork(ui, art, playlist.artwork(), art_size(), "t67x67");
         ui.add_space(4.0);
         ui.vertical(|ui| {
             ui.add_space(1.0);
@@ -352,7 +413,7 @@ pub fn playlist_row(ui: &mut egui::Ui, art: &ArtCache, playlist: &Playlist, note
 pub fn pending_row(ui: &mut egui::Ui, label: &str) {
     let (_, inner) = row_frame(ui);
     let mut child = ui.new_child(UiBuilder::new().max_rect(inner).layout(Layout::left_to_right(Align::Center)));
-    let (r, _) = child.allocate_exact_size(vec2(ART, ART), Sense::hover());
+    let (r, _) = child.allocate_exact_size(vec2(art_size(), art_size()), Sense::hover());
     child.painter().rect_filled(r, 4.0, surface());
     child.add_space(4.0);
     child.label(RichText::new(label).color(muted()));

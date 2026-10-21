@@ -63,6 +63,10 @@ struct StreamUrl {
 
 /// Resolves and opens `item` for playback starting at `start` seconds.
 pub fn open(api: &Api, item: &QueueItem, start: f64) -> Result<Box<dyn Source>, String> {
+    // The user's own files play straight from disk.
+    if let Some(path) = item.track.as_ref().and_then(|t| t.local_path.clone()) {
+        return Ok(Box::new(super::local::LocalSource::open(item.id, &path, start)?));
+    }
     let mut track = match &item.track {
         Some(t) => t.clone(),
         None => fetch_track(api, item.id)?,
@@ -102,15 +106,20 @@ fn fetch_track(api: &Api, id: u64) -> Result<Arc<Track>, String> {
 
 /// Preferred stream: plain HLS AAC (160k, else 96k), then progressive MP3.
 /// Encrypted (DRM) streams are never used.
+/// Stream quality: true prefers 160 kbps AAC (when the account gets it),
+/// false the lighter 96-128 kbps streams.
+pub static HIGH_QUALITY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
 fn pick(track: &Track) -> Result<&Transcoding, String> {
     let all = track.media.as_ref().map(|m| m.transcodings.as_slice()).unwrap_or_default();
     let usable = |t: &&Transcoding| !t.snipped;
     let aac = |t: &&Transcoding| t.format.protocol == "hls" && t.format.mime_type.starts_with("audio/mp4");
+    let high = HIGH_QUALITY.load(Ordering::Relaxed);
     let best = all
         .iter()
         .filter(usable)
         .filter(aac)
-        .find(|t| t.preset.starts_with("aac_160"))
+        .find(|t| t.preset.starts_with("aac_160") == high)
         .or_else(|| all.iter().filter(usable).find(aac))
         .or_else(|| {
             all.iter()
@@ -298,7 +307,7 @@ impl Source for HlsSource {
 
 /// Appends `samples` (interleaved, `channels` wide) as stereo, dropping the
 /// first `skip` frames.
-fn append_stereo(samples: &[f32], channels: usize, skip: &mut u64, decoded: &mut u64, out: &mut Vec<f32>) {
+pub(super) fn append_stereo(samples: &[f32], channels: usize, skip: &mut u64, decoded: &mut u64, out: &mut Vec<f32>) {
     if channels == 0 {
         return;
     }

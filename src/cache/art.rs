@@ -159,7 +159,11 @@ fn worker(inner: Arc<Inner>) {
 
 fn load(inner: &Inner, url: &str) -> Option<ColorImage> {
     let path = inner.dir.join(super::key_hash(url));
-    let bytes = match fs::read(&path) {
+    // Covers of the user's own files are read in place.
+    let local = url.strip_prefix("file:///").map(|p| std::path::PathBuf::from(p.replace('/', "\\")));
+    let bytes = match local {
+        Some(file) => fs::read(file).ok()?,
+        None => match fs::read(&path) {
         Ok(b) => {
             super::touch(&path);
             b
@@ -177,6 +181,7 @@ fn load(inner: &Inner, url: &str) -> Option<ColorImage> {
             }
             b
         }
+        },
     };
     let rgba = match image::load_from_memory(&bytes) {
         // Big artwork (500 px mix tiles) is shrunk on load; nothing is shown

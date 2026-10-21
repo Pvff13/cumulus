@@ -92,6 +92,19 @@ and every track credits its artist and links back to SoundCloud.
 - Bottom bar: shuffle, previous, play/pause, next, repeat (off / all / one),
   ∞ autoplay, seek bar and volume. The title opens the track's page; the
   artist links to SoundCloud.
+- **Resume where you left off:** the queue, the track and the position come
+  back (paused) the next time you open Cumulus.
+- **Sleep timer** (☾ in the player bar): 15-90 minutes or the end of the
+  track. It fades out, then pauses.
+- **Equalizer** (EQ): five bands plus a preamp, with presets (Bass boost,
+  Vocal, Electronic, Late night...). Changes are heard instantly.
+- **Playback speed** (1×): Slowed, Normal and Nightcore, or anything from
+  0.5× to 2×. Pitch follows speed, like a record.
+- **Paste a SoundCloud link** into Search to open that track, playlist,
+  album or artist. Short on.soundcloud.com links work too.
+- **Keyboard:** Space, ←/→ (seek), ↑/↓ (volume), Ctrl+←/→ (previous/next),
+  M, S, R, L, Ctrl+F or /, Alt+←/→ (back/forward), Shift+< / Shift+> (speed).
+  All of them can be changed in Settings.
 - **Track pages:** click any track's title (or "Track details" in its
   right-click menu) for a page like soundcloud.com's: artwork, plays, likes,
   reposts, comments, release date, genre and description; Play, Like, Add to
@@ -153,6 +166,70 @@ and progress. It keeps updating while Cumulus is minimised or in the tray.
 lime, yellow, orange, red, pink, magenta, silver). Changes apply instantly and
 are remembered. On the light theme, bright accents are darkened a little so
 they stay readable.
+
+**Settings → Appearance** has more:
+- **Theme gallery:** SoundCloud, Midnight, Synthwave, Forest, OLED, Mono,
+  Nord, Dracula, Solarized, Coffee, Sakura and Paper.
+- **Make your own theme:** pick every colour. **Copy as text** shares a
+  theme; anyone can paste it back in with **Use it**.
+- UI scale (70–150 %), the main font, player bar on top or bottom, sidebar
+  left or right, and compact lists.
+- **Wallpaper:** a picture, a slideshow from a folder, or the playing song's
+  cover, behind the page with adjustable dimming.
+- **Visualizer** behind the player bar: bars, mirrored or line.
+
+## More to explore
+
+- **Discover:** SoundCloud's trending chart, plus 24 genres to browse by
+  tracks, albums, artists or playlists.
+- **History** (what you played) and **Following** (who you follow) in the
+  sidebar.
+- **Home** adds **Continue listening** (playlists, albums and mixes you
+  played lately) and **Fresh drops** (new uploads from people you follow,
+  past two weeks).
+- **Likes** can be sorted by title, artist, length or plays. Picking a sort
+  loads every like first.
+- **Artist pages** have tabs: Tracks, Popular, Albums, Playlists, Reposts,
+  Related artists, and About (bio and social links).
+- **Hiding:** right-click a track → **Not interested** or **Block artist**,
+  or add keywords in Settings. They're hidden everywhere, including autoplay.
+
+## Local files
+
+**Local files** in the sidebar plays music on your PC: MP3, M4A/AAC, FLAC,
+WAV, AIFF, OGG Vorbis and ALAC.
+- **Add music:** add folders (subfolders included) or single files, or drag
+  them onto the window.
+- **Tags:** titles, artists, albums and covers come from the files' tags,
+  with `cover.jpg` / `folder.jpg` as a fallback.
+- **Faster rescans:** the library is cached, so a rescan only reads files
+  that changed.
+- **Local playlists:** they can mix your files with SoundCloud tracks
+  (right-click any track → **Add to local playlist**). They're saved on this
+  PC only and aren't uploaded anywhere.
+
+## Settings
+
+- **Playback:**
+  - output device;
+  - stream quality (160 kbps AAC when available, or lighter 96–128 kbps);
+  - skip a track that gets stuck.
+- **System:** start with Windows (opens hidden in the tray), and close to
+  tray.
+- **Keyboard:** every shortcut can be changed with a key recorder.
+  Play/pause, next, previous, volume, mute and like can also get **global**
+  keys that work while another app is in front.
+- **Integrations:**
+  - Discord status ("Listening to Cumulus" with the song, artist and
+    cover; needs the Discord desktop app);
+  - scrobbling to **Last.fm** and **ListenBrainz** (after half a track or 4
+    minutes; logins are kept in Windows' credential store);
+  - for OBS, a now-playing **text file** and a local **browser overlay**
+    (`http://127.0.0.1:8337/`, add `?hidepaused=1` to hide it while paused).
+- **Hiding:** keywords, blocked artists and "not interested" tracks, each
+  with undo.
+- **Mini player** (button in the player bar): just a small, always-on-top
+  pop-out with controls. ⤢ goes back to the full window.
 
 ## Queue, search, likes, playlists
 
