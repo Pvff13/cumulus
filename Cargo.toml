@@ -1,6 +1,6 @@
 [package]
 name = "cumulus"
-version = "0.3.7"
+version = "0.3.8"
 edition = "2024"
 description = "Lightweight native desktop player for your SoundCloud library (unofficial)"
 license = "MIT"
@@ -72,6 +72,7 @@ embed-resource = "3"
 [package.metadata.packager]
 product-name = "Cumulus"
 identifier = "app.cumulus.player"
+category = "Music"
 description = "Lightweight native desktop player for your SoundCloud library (unofficial)"
 before-packaging-command = "cargo build --release"
 out-dir = "dist"

@@ -1,0 +1,46 @@
+#!/bin/sh
+# Cumulus AppImage entry point. Cumulus uses the system's own GTK 3 and
+# WebKitGTK 4.1 (bundling them breaks HTTPS and sign-in on newer systems),
+# so check they're installed and say how to get them if not.
+HERE="$(dirname "$(readlink -f "$0")")"
+
+have_lib() {
+    for ld in ldconfig /sbin/ldconfig /usr/sbin/ldconfig; do
+        if command -v "$ld" >/dev/null 2>&1; then
+            "$ld" -p 2>/dev/null | grep -q "$1" && return 0
+        fi
+    done
+    # No ldconfig (some distros): look in the usual places.
+    for dir in /usr/lib /usr/lib64 /usr/lib/x86_64-linux-gnu /lib/x86_64-linux-gnu; do
+        [ -e "$dir/$1" ] && return 0
+    done
+    return 1
+}
+
+missing=""
+for lib in libgtk-3.so.0 libwebkit2gtk-4.1.so.0; do
+    have_lib "$lib" || missing="$missing $lib"
+done
+
+if [ -n "$missing" ]; then
+    msg="Cumulus needs GTK 3 and WebKitGTK 4.1, which aren't installed.
+
+Install them, then start Cumulus again:
+  Ubuntu / Debian / Mint:  sudo apt install libwebkit2gtk-4.1-0
+  Fedora:                  sudo dnf install webkit2gtk4.1
+  Arch / Manjaro:          sudo pacman -S webkit2gtk-4.1
+  openSUSE:                sudo zypper install libwebkit2gtk-4_1-0
+
+(missing:$missing)"
+    echo "$msg" >&2
+    if command -v zenity >/dev/null 2>&1; then
+        zenity --error --title="Cumulus" --text="$msg" 2>/dev/null
+    elif command -v kdialog >/dev/null 2>&1; then
+        kdialog --title "Cumulus" --error "$msg" 2>/dev/null
+    elif command -v notify-send >/dev/null 2>&1; then
+        notify-send "Cumulus can't start" "Install WebKitGTK 4.1 (see the terminal or README)"
+    fi
+    exit 1
+fi
+
+exec "$HERE/usr/bin/cumulus" "$@"

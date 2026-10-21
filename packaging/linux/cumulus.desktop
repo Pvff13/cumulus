@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Cumulus
+GenericName=SoundCloud player
+Comment=Lightweight desktop player for your SoundCloud library (unofficial)
+Exec=cumulus %U
+Icon=cumulus
+Terminal=false
+Categories=AudioVideo;Audio;Player;
+Keywords=soundcloud;music;player;
+StartupWMClass=cumulus

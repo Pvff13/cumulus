@@ -1,7 +1,7 @@
 # Cumulus
 
-A lightweight native desktop player for your SoundCloud library: Rust + egui,
-native audio, no bundled browser. **Unofficial; not affiliated with SoundCloud.**
+A lightweight native desktop player for your SoundCloud library, for Windows
+and Linux: Rust + egui, native audio, no bundled browser. **Unofficial; not affiliated with SoundCloud.**
 
 ![Cumulus: Home with Continue listening, Fresh drops and your mixes](assets/screenshot.png)
 
@@ -44,6 +44,50 @@ of the sidebar to check right away). When there is one, it downloads it, checks
 its digital signature, and an **Update to …** button appears at the bottom of
 the sidebar. One click and it restarts on the new version. If you have
 0.1.0, download the newest release once by hand.
+
+## Install (Linux)
+
+Cumulus for Linux is a single small **AppImage** file: no installer, no
+admin rights. It runs on most distributions from 2022 on (Ubuntu 22.04+,
+Debian 12+, Mint 21+, Fedora 36+, Arch...), on 64-bit Intel/AMD PCs.
+
+It uses your system's **GTK 3** and **WebKitGTK 4.1** (for the sign-in
+window). GNOME desktops usually have both; if not, Cumulus tells you, and
+one command installs them:
+
+| Distribution | Command |
+|---|---|
+| Ubuntu / Debian / Mint | `sudo apt install libwebkit2gtk-4.1-0` |
+| Fedora | `sudo dnf install webkit2gtk4.1` |
+| Arch / Manjaro | `sudo pacman -S webkit2gtk-4.1` |
+| openSUSE | `sudo zypper install libwebkit2gtk-4_1-0` |
+
+1. From the **[latest release](https://github.com/Pvff13/cumulus/releases/latest)**,
+   download **`Cumulus-x86_64.AppImage`**.
+2. Make it runnable: right-click it → *Properties* → *Permissions* → tick
+   **Allow executing file as program**. Or in a terminal:
+   ```bash
+   chmod +x Cumulus-x86_64.AppImage
+   ```
+3. Double-click it (or run `./Cumulus-x86_64.AppImage`) and sign in.
+
+If it doesn't start, your system is probably missing **FUSE 2**, which
+AppImages use. On Ubuntu/Debian/Mint install `libfuse2` (`libfuse2t64` on
+Ubuntu 24.04 and newer); on Fedora, `fuse-libs`. Or run it without FUSE:
+`./Cumulus-x86_64.AppImage --appimage-extract-and-run`.
+
+Updates work the same as on Windows: **Update to …** in the sidebar replaces
+the AppImage file in place, after checking its signature.
+
+Linux notes:
+- **Tray:** the icon only appears on desktops that show tray icons (KDE,
+  Cinnamon, XFCE; GNOME needs the *AppIndicator* extension). Without one,
+  closing the window quits Cumulus.
+- **Global hotkeys** work on X11 but not on Wayland, which doesn't allow them.
+- **Media keys and the system media controls** work through MPRIS.
+- **Logins** are saved in the system keyring (GNOME Keyring / KWallet). If
+  there's none, they go in a file only your user can read.
+- The Linux version is new: please [report problems](https://github.com/Pvff13/cumulus/issues).
 
 ## How it talks to SoundCloud
 
@@ -292,7 +336,16 @@ the "Desktop development with C++" workload. WebView2 is built into Windows 11.
 cargo build --release
 ```
 
-The binary is `target/release/cumulus.exe` (about 9.6 MB).
+The binary is `target/release/cumulus.exe`.
+
+Requirements (Linux, e.g. Ubuntu/Debian): Rust (via `rustup`) and
+
+```bash
+sudo apt install build-essential pkg-config libgtk-3-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev libxdo-dev libssl-dev libasound2-dev libdbus-1-dev libxkbcommon-dev
+```
+
+then `cargo build --release` (binary: `target/release/cumulus`), or
+`packaging/linux/build-appimage.sh` for the AppImage.
 
 ### Updates
 
@@ -354,6 +407,10 @@ Tests: `cargo test` (offline) and `cargo test -- --ignored` (hits SoundCloud).
    `cargo run -- --dev-sign <key> target/public/release/cumulus.exe <ver> > cumulus.exe.sig`
 4. Create a GitHub release tagged `v<ver>` with three files: the installer,
    `cumulus.exe` and `cumulus.exe.sig`.
+5. Linux: on Ubuntu 22.04 (the oldest supported glibc), run
+   `packaging/linux/build-appimage.sh`, sign
+   `dist/Cumulus-x86_64.AppImage` the same way, and attach it with its
+   `.sig` to the same release.
 
 `cargo run -- --dev-keygen <path>` creates a new key pair (only needed once)
 and prints the public key for `RELEASE_KEY` in `src/signing.rs`.
