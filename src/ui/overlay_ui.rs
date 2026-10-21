@@ -1,4 +1,4 @@
-//! The "⧉ Overlay" menu next to the refresh button, and the pop-out
+//! The "▣ Overlay" menu next to the refresh button, and the pop-out
 //! now-playing window. The pop-out is a real second window: it keeps
 //! updating while the main window is minimised or hidden in the tray, and
 //! OBS can capture it with a Window Capture source.
@@ -52,7 +52,7 @@ pub struct MenuResult {
     pub changed: bool,
 }
 
-/// The pop-out's toggles; shared by the ⧉ menu and the pop-out's own right-click menu.
+/// The pop-out's toggles; shared by the ▣ menu and the pop-out's own right-click menu.
 fn toggles(ui: &mut egui::Ui, menu: &mut OverlayMenu) -> bool {
     let mut changed = false;
     changed |= ui
@@ -66,11 +66,11 @@ fn toggles(ui: &mut egui::Ui, menu: &mut OverlayMenu) -> bool {
     changed
 }
 
-/// The "⧉ Overlay" button and its menu. Takes only the bits it needs so it
+/// The "▣ Overlay" button and its menu. Takes only the bits it needs so it
 /// can sit in headers that are drawn while other app state is borrowed.
 pub fn overlay_menu(ui: &mut egui::Ui, menu: &mut OverlayMenu) -> MenuResult {
     let mut out = MenuResult::default();
-    let label = RichText::new("⧉ Overlay").color(if menu.popout { accent() } else { ui.visuals().text_color() });
+    let label = RichText::new("▣ Overlay").color(if menu.popout { accent() } else { ui.visuals().text_color() });
     // Stays open while ticking options; closes on a click outside it.
     let stay_open = egui::containers::menu::MenuConfig::new().close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside);
     egui::containers::menu::MenuButton::new(label).config(stay_open).ui(ui, |ui| {
@@ -149,7 +149,7 @@ impl App {
                 // Right-click anywhere on the pop-out for its options.
                 let bg = ui.interact(ui.max_rect(), ui.scope_id().with("popout-bg"), Sense::click());
                 egui::Popup::context_menu(&bg).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).show(|ui| {
-                    if mini && ui.button("⤢  Back to the full window").clicked() {
+                    if mini && ui.button("⛶  Back to the full window").clicked() {
                         expand = true;
                         ui.close();
                     }
@@ -166,7 +166,7 @@ impl App {
                 // Mini player: a way back to the full window.
                 if mini {
                     let r = egui::Rect::from_min_size(full.right_top() + vec2(-14.0, -10.0), vec2(22.0, 18.0));
-                    let b = egui::Button::new(RichText::new("⤢").size(13.0).color(muted())).frame(false);
+                    let b = egui::Button::new(RichText::new("⛶").size(13.0).color(muted())).frame(false);
                     if ui.put(r, b).on_hover_text("Back to the full window").clicked() {
                         expand = true;
                     }

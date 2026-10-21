@@ -206,6 +206,7 @@ impl Fade {
         }
     }
 
+    #[cfg(debug_assertions)]
     pub fn track_id(&self) -> u64 {
         self.src.track_id()
     }

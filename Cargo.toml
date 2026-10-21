@@ -24,7 +24,6 @@ serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 # %LOCALAPPDATA% and friends.
 dirs = "7.0.0"
-rfd = "0.15"
 global-hotkey = "0.7"
 md5 = { package = "md-5", version = "0.10" }
 image = { version = "0.25.10", default-features = false, features = ["jpeg", "png"] }
@@ -43,8 +42,18 @@ ed25519-dalek = "3"
 sha2 = "0.11"
 getrandom = "0.3"
 
+# egui's own monochrome emoji fonts (🔀 🔁 🎨 ...): Linux has no plain emoji
+# font to fall back on, and they keep icons looking the same everywhere.
+egui = { version = "0.37.0", default-features = false, features = ["monochrome_emoji_fonts"] }
+
+[target.'cfg(windows)'.dependencies]
+# Native Windows file pickers (Linux uses GTK's, see dialogs.rs).
+rfd = "0.15"
+
 [target.'cfg(target_os = "linux")'.dependencies]
 eframe = { version = "0.37.0", default-features = false, features = ["glow", "default_fonts", "links", "clipboard", "x11", "wayland"] }
+# Tray icon, file pickers and the sign-in window run on GTK (same version tray-icon and wry use).
+gtk = "0.18"
 
 [profile.release]
 opt-level = 3

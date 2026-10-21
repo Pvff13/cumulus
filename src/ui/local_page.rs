@@ -155,16 +155,13 @@ impl App {
         let mut changed = false;
         ui.horizontal_wrapped(|ui| {
             if ui.button("Add folder…").clicked() {
-                if let Some(dir) = rfd::FileDialog::new().set_title("Music folder").pick_folder() {
+                if let Some(dir) = crate::dialogs::pick_folder("Music folder") {
                     changed |= self.add_local_paths(vec![dir]) > 0;
                 }
             }
             if ui.button("Add files…").clicked() {
-                if let Some(files) = rfd::FileDialog::new()
-                    .set_title("Music files")
-                    .add_filter("Music", &crate::player::local::EXTENSIONS)
-                    .pick_files()
-                {
+                let files = crate::dialogs::pick_files("Music files", "Music", &crate::player::local::EXTENSIONS);
+                if !files.is_empty() {
                     changed |= self.add_local_paths(files) > 0;
                 }
             }
@@ -174,7 +171,7 @@ impl App {
             let mut remove = None;
             for (i, f) in self.local_lib.folders.iter().enumerate() {
                 let name = Path::new(f).file_name().and_then(|n| n.to_str()).unwrap_or(f);
-                if ui.small_button(format!("📁 {name}  ✕")).on_hover_text(format!("{f}\nClick to remove this folder")).clicked() {
+                if ui.small_button(format!("📁 {name}  ×")).on_hover_text(format!("{f}\nClick to remove this folder")).clicked() {
                     remove = Some(i);
                 }
             }

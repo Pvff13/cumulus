@@ -170,7 +170,7 @@ impl App {
             ui.horizontal(|ui| {
                 ui.add(egui::Label::new(RichText::new(&self.obs_text_path).small().color(muted())).truncate());
                 if ui.button("Change…").clicked() {
-                    if let Some(p) = rfd::FileDialog::new().set_file_name("now-playing.txt").add_filter("Text", &["txt"]).save_file() {
+                    if let Some(p) = crate::dialogs::save_file("Now-playing text file", "now-playing.txt", "Text", &["txt"]) {
                         self.obs_text_path = p.display().to_string();
                         save = true;
                     }
@@ -336,7 +336,7 @@ impl App {
         let mut remove = None;
         ui.horizontal_wrapped(|ui| {
             for (i, k) in self.hide_rules.keywords.iter().enumerate() {
-                if ui.button(format!("{k}  ✕")).on_hover_text("Remove").clicked() {
+                if ui.button(format!("{k}  ×")).on_hover_text("Remove").clicked() {
                     remove = Some(i);
                 }
             }

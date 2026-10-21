@@ -1,5 +1,5 @@
 //! The queue side panel: what's playing and what's next. Drag entries to
-//! reorder, ✕ to remove, double-click to jump to one.
+//! reorder, × to remove, double-click to jump to one.
 
 use eframe::egui::{self, Align, CursorIcon, Layout, Rect, RichText, Sense, Stroke, UiBuilder, vec2};
 
@@ -21,7 +21,7 @@ impl App {
         ui.horizontal(|ui| {
             ui.heading("Queue");
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if ui.add(egui::Button::new("✕").frame(false)).on_hover_text("Close").clicked() {
+                if ui.add(egui::Button::new("×").frame(false)).on_hover_text("Close").clicked() {
                     self.show_queue = false;
                 }
             });
@@ -117,12 +117,12 @@ impl App {
         let inner = Rect::from_min_max(rect.min + vec2(6.0, 4.0), rect.max - vec2(6.0, 4.0));
         let mut child = ui.new_child(UiBuilder::new().max_rect(inner).layout(Layout::right_to_left(Align::Center)));
         let ui = &mut child;
-        if !current && ui.add(egui::Button::new(RichText::new("✕").color(muted())).frame(false)).on_hover_text("Remove").clicked() {
+        if !current && ui.add(egui::Button::new(RichText::new("×").color(muted())).frame(false)).on_hover_text("Remove").clicked() {
             edit = Some(Edit::Remove(p));
         }
         ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
             if !current {
-                ui.label(RichText::new("⠿").color(muted())).on_hover_cursor(CursorIcon::Grab);
+                ui.label(RichText::new("☰").color(muted())).on_hover_cursor(CursorIcon::Grab);
             }
             let art = item.track.as_ref().and_then(|t| t.artwork().map(str::to_string));
             let _ = rows::artwork(ui, &self.art, art.as_deref(), 34.0, "t67x67");

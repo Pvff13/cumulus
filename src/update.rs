@@ -21,7 +21,31 @@ use crate::api::client::Agent;
 
 /// How often to ask GitHub for a new release.
 const REMOTE_EVERY: Duration = Duration::from_secs(6 * 3600);
-const MAX_EXE: u64 = 64 * 1024 * 1024;
+/// Largest download accepted. AppImages carry their own libraries (GTK,
+/// WebKit), so they're far bigger than the exe.
+#[cfg(target_os = "linux")]
+const MAX_DOWNLOAD: u64 = 400 * 1024 * 1024;
+#[cfg(not(target_os = "linux"))]
+const MAX_DOWNLOAD: u64 = 64 * 1024 * 1024;
+
+/// The release file this build updates from, and its signature.
+#[cfg(target_os = "linux")]
+pub const ASSET: &str = "Cumulus-x86_64.AppImage";
+#[cfg(not(target_os = "linux"))]
+pub const ASSET: &str = "cumulus.exe";
+
+/// The file that gets replaced: the AppImage itself on Linux (the running
+/// binary is inside its temporary mount), the exe elsewhere.
+fn installed_file() -> Option<PathBuf> {
+    #[cfg(target_os = "linux")]
+    {
+        std::env::var_os("APPIMAGE").map(PathBuf::from)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        std::env::current_exe().ok()
+    }
+}
 
 pub const BUILD_ID_ARG: &str = "--build-id";
 
@@ -216,21 +240,40 @@ fn newer_release(agent: &Agent, rejected: &HashSet<String>) -> Result<Option<Rea
     if rejected.contains(&version) {
         return Err(fail("it failed verification earlier"));
     }
+    // Not running from an installed copy (e.g. a Linux build outside an AppImage).
+    if installed_file().is_none() {
+        return Ok(None);
+    }
     let asset = |name: &str| release.assets.iter().find(|a| a.name == name).map(|a| a.browser_download_url.clone());
-    let exe_url = asset("cumulus.exe").ok_or_else(|| fail("release has no cumulus.exe"))?;
-    let sig_url = asset("cumulus.exe.sig").ok_or_else(|| fail("release has no signature"))?;
+    let exe_url = asset(ASSET).ok_or_else(|| fail(&format!("release has no {ASSET}")))?;
+    let sig_url = asset(&format!("{ASSET}.sig")).ok_or_else(|| fail("release has no signature"))?;
     let sig = agent.get_bytes(&sig_url, 4096).map_err(|e| fail(&format!("signature download failed ({e})")))?;
-    let exe = agent.get_bytes(&exe_url, MAX_EXE).map_err(|e| fail(&format!("download failed ({e})")))?;
+    let exe = agent.get_bytes(&exe_url, MAX_DOWNLOAD).map_err(|e| fail(&format!("download failed ({e})")))?;
     crate::signing::verify(&version, &exe, &String::from_utf8_lossy(&sig)).map_err(|e| fail(&e))?;
     // Verified: only now does it touch the disk.
     let dir = crate::paths::data_dir().join("update");
     std::fs::create_dir_all(&dir).map_err(|e| fail(&e.to_string()))?;
-    let path = dir.join(format!("cumulus-{version}.exe"));
+    let path = dir.join(format!("{version}-{ASSET}"));
     std::fs::write(&path, &exe).map_err(|e| fail(&e.to_string()))?;
     Ok(Some(Ready { exe: path, version: Some(version) }))
 }
 
+/// Linux: replaces the AppImage file (allowed while it runs: the running
+/// copy keeps the old file open) and starts the new one.
+#[cfg(target_os = "linux")]
+pub fn apply(new_exe: &Path) -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
+    let target = installed_file().ok_or("not running from an AppImage")?;
+    let staged = target.with_extension("AppImage.new");
+    std::fs::copy(new_exe, &staged).map_err(|e| format!("couldn't copy the new version ({e})"))?;
+    std::fs::set_permissions(&staged, std::fs::Permissions::from_mode(0o755)).map_err(|e| e.to_string())?;
+    std::fs::rename(&staged, &target).map_err(|e| format!("couldn't replace the AppImage ({e})"))?;
+    Command::new(&target).spawn().map_err(|e| format!("couldn't start the new version ({e})"))?;
+    Ok(())
+}
+
 /// Swaps in the new exe and starts it. The caller then quits.
+#[cfg(not(target_os = "linux"))]
 pub fn apply(new_exe: &Path) -> Result<(), String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     let old = old_path(&exe);
@@ -281,9 +324,9 @@ mod tests {
         let version = release.tag_name.trim_start_matches('v');
         let get = |name: &str| {
             let a = release.assets.iter().find(|a| a.name == name).expect(name);
-            agent.get_bytes(&a.browser_download_url, MAX_EXE).unwrap()
+            agent.get_bytes(&a.browser_download_url, MAX_DOWNLOAD).unwrap()
         };
-        let (mut exe, sig) = (get("cumulus.exe"), get("cumulus.exe.sig"));
+        let (mut exe, sig) = (get(ASSET), get(&format!("{ASSET}.sig")));
         let sig = String::from_utf8_lossy(&sig).to_string();
         crate::signing::verify(version, &exe, &sig).expect("published release verifies");
         let mid = exe.len() / 2;

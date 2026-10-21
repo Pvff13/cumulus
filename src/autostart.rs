@@ -40,14 +40,34 @@ pub fn set(on: bool) -> Result<(), String> {
     if ok { Ok(()) } else { Err("Windows refused the change".into()) }
 }
 
+/// Linux: ~/.config/autostart/cumulus.desktop.
 #[cfg(not(windows))]
-pub fn enabled() -> bool {
-    false
+fn desktop_file() -> Option<std::path::PathBuf> {
+    Some(dirs::config_dir()?.join("autostart").join("cumulus.desktop"))
 }
 
 #[cfg(not(windows))]
-pub fn set(_on: bool) -> Result<(), String> {
-    Err("only on Windows for now".into())
+pub fn enabled() -> bool {
+    desktop_file().is_some_and(|p| p.exists())
+}
+
+#[cfg(not(windows))]
+pub fn set(on: bool) -> Result<(), String> {
+    let path = desktop_file().ok_or("no config folder")?;
+    if !on {
+        return match std::fs::remove_file(&path) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e.to_string()),
+            _ => Ok(()),
+        };
+    }
+    // Inside an AppImage, current_exe is a temporary mount: start the AppImage itself.
+    let exe = std::env::var("APPIMAGE").map(std::path::PathBuf::from).or_else(|_| std::env::current_exe()).map_err(|e| e.to_string())?;
+    let entry = format!(
+        "[Desktop Entry]\nType=Application\nName=Cumulus\nComment=SoundCloud player\nExec=\"{}\" {MINIMIZED_ARG}\nTerminal=false\nX-GNOME-Autostart-enabled=true\n",
+        exe.display()
+    );
+    std::fs::create_dir_all(path.parent().ok_or("bad path")?).map_err(|e| e.to_string())?;
+    std::fs::write(&path, entry).map_err(|e| e.to_string())
 }
 
 /// Started by the Run entry (open hidden in the tray).

@@ -360,9 +360,9 @@ impl App {
                     ui.add(egui::Label::new(RichText::new(shown).small().color(muted())).truncate());
                     if ui.button(if folder { "Choose folder…" } else { "Choose picture…" }).clicked() {
                         let picked = if folder {
-                            rfd::FileDialog::new().set_title("Folder of wallpapers").pick_folder()
+                            crate::dialogs::pick_folder("Folder of wallpapers")
                         } else {
-                            rfd::FileDialog::new().set_title("Wallpaper").add_filter("Pictures", &["jpg", "jpeg", "png"]).pick_file()
+                            crate::dialogs::pick_file("Wallpaper", "Pictures", &["jpg", "jpeg", "png"])
                         };
                         if let Some(p) = picked {
                             self.looks.wall_path = Some(p.display().to_string());

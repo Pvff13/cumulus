@@ -166,15 +166,15 @@ impl App {
         });
     }
 
-    /// The ☾ button and its menu.
+    /// The 🌙 button and its menu.
     fn sleep_button(&mut self, ui: &mut egui::Ui) {
         let label = match self.sleep {
             Some(Sleep::At(end)) => {
                 let s = end.saturating_duration_since(Instant::now()).as_secs();
-                format!("☾ {}:{:02}", s / 60, s % 60)
+                format!("🌙 {}:{:02}", s / 60, s % 60)
             }
-            Some(Sleep::EndOfTrack(_)) => "☾ end".to_string(),
-            None => "☾".to_string(),
+            Some(Sleep::EndOfTrack(_)) => "🌙 end".to_string(),
+            None => "🌙".to_string(),
         };
         let text = RichText::new(label).size(15.0).color(if self.sleep.is_some() { accent() } else { muted() });
         let mut pick: Option<Option<Sleep>> = None;

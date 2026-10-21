@@ -160,7 +160,9 @@ fn worker(inner: Arc<Inner>) {
 fn load(inner: &Inner, url: &str) -> Option<ColorImage> {
     let path = inner.dir.join(super::key_hash(url));
     // Covers of the user's own files are read in place.
-    let local = url.strip_prefix("file:///").map(|p| std::path::PathBuf::from(p.replace('/', "\\")));
+    let local = url.strip_prefix("file:///").map(|p| {
+        if cfg!(windows) { std::path::PathBuf::from(p.replace('/', "\\")) } else { std::path::PathBuf::from(format!("/{}", p.trim_start_matches('/'))) }
+    });
     let bytes = match local {
         Some(file) => fs::read(file).ok()?,
         None => match fs::read(&path) {

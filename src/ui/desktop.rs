@@ -27,10 +27,84 @@ struct TrayIds {
     quit: MenuId,
 }
 
+/// The tray icon and its Play/Pause item. On Linux they live on the GTK
+/// thread (GTK isn't thread-safe), so this only forwards changes there.
+#[cfg(not(target_os = "linux"))]
+struct Tray {
+    icon: TrayIcon,
+    play: MenuItem,
+}
+
+#[cfg(target_os = "linux")]
+struct Tray;
+
+#[cfg(target_os = "linux")]
+thread_local! {
+    /// On the GTK thread only.
+    static GTK_TRAY: std::cell::RefCell<Option<(TrayIcon, MenuItem)>> = const { std::cell::RefCell::new(None) };
+}
+
+impl Tray {
+    #[cfg(not(target_os = "linux"))]
+    fn new(send: impl Fn(DesktopEvent) + Send + Sync + Clone + 'static) -> Option<Self> {
+        tray(send).map(|(icon, play)| Self { icon, play })
+    }
+
+    #[cfg(target_os = "linux")]
+    fn new(send: impl Fn(DesktopEvent) + Send + Sync + Clone + 'static) -> Option<Self> {
+        let made = crate::gtk_thread::run(move || {
+            // No tray host (e.g. GNOME without the AppIndicator extension, WSL):
+            // an icon would be invisible, so don't make one.
+            if !crate::gtk_thread::tray_host_present() {
+                return false;
+            }
+            match tray(send) {
+                Some(t) => {
+                    GTK_TRAY.with(|c| *c.borrow_mut() = Some(t));
+                    true
+                }
+                None => false,
+            }
+        });
+        made.unwrap_or(false).then_some(Self)
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    fn set_tooltip(&self, tip: String) {
+        let _ = self.icon.set_tooltip(Some(tip));
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    fn set_play_text(&self, text: &'static str) {
+        self.play.set_text(text);
+    }
+
+    #[cfg(target_os = "linux")]
+    fn set_tooltip(&self, tip: String) {
+        crate::gtk_thread::spawn(move || {
+            GTK_TRAY.with(|c| {
+                if let Some((icon, _)) = c.borrow().as_ref() {
+                    let _ = icon.set_tooltip(Some(tip));
+                }
+            })
+        });
+    }
+
+    #[cfg(target_os = "linux")]
+    fn set_play_text(&self, text: &'static str) {
+        crate::gtk_thread::spawn(move || {
+            GTK_TRAY.with(|c| {
+                if let Some((_, play)) = c.borrow().as_ref() {
+                    play.set_text(text);
+                }
+            })
+        });
+    }
+}
+
 pub struct Desktop {
     media: Option<MediaControls>,
-    tray: Option<TrayIcon>,
-    play_item: Option<MenuItem>,
+    tray: Option<Tray>,
     shown_track: Option<u64>,
     shown_playing: Option<bool>,
     last_progress: Instant,
@@ -41,11 +115,8 @@ impl Desktop {
     /// no tray on some Linux desktops); the app works without them.
     pub fn new(cc: &eframe::CreationContext<'_>, send: impl Fn(DesktopEvent) + Send + Sync + Clone + 'static) -> Self {
         let media = media_controls(cc, send.clone());
-        let (tray, play_item) = match tray(send) {
-            Some((t, p)) => (Some(t), Some(p)),
-            None => (None, None),
-        };
-        Self { media, tray, play_item, shown_track: None, shown_playing: None, last_progress: Instant::now() }
+        let tray = Tray::new(send);
+        Self { media, tray, shown_track: None, shown_playing: None, last_progress: Instant::now() }
     }
 
     /// Keeps the OS controls in step with playback. Cheap to call every tick:
@@ -71,15 +142,15 @@ impl Desktop {
                     Some(t) => truncate(&format!("{} · {}", t.title, t.user.username), 120),
                     None => "Cumulus".to_string(),
                 };
-                let _ = tray.set_tooltip(Some(tip));
+                tray.set_tooltip(tip);
             }
         }
         let refresh_progress = playing && self.last_progress.elapsed() > Duration::from_secs(5);
         if self.shown_playing != Some(playing) || refresh_progress {
             self.shown_playing = Some(playing);
             self.last_progress = Instant::now();
-            if let Some(item) = &self.play_item {
-                item.set_text(if playing { "Pause" } else { "Play" });
+            if let Some(tray) = &self.tray {
+                tray.set_play_text(if playing { "Pause" } else { "Play" });
             }
             if let Some(m) = self.media.as_mut() {
                 let progress = position.map(|p| MediaPosition(Duration::from_secs_f64(p.max(0.0))));

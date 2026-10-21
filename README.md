@@ -104,7 +104,7 @@ and every track credits its artist and links back to SoundCloud.
   artist links to SoundCloud.
 - **Resume where you left off:** the queue, the track and the position come
   back (paused) the next time you open Cumulus.
-- **Sleep timer** (☾ in the player bar): 15-90 minutes or the end of the
+- **Sleep timer** (🌙 in the player bar): 15-90 minutes or the end of the
   track. It fades out, then pauses.
 - **Equalizer** (EQ): five bands plus a preamp, with presets (Bass boost,
   Vocal, Electronic, Late night...). Changes are heard instantly.
@@ -156,13 +156,13 @@ and every track credits its artist and links back to SoundCloud.
 
 ## Now-playing pop-out (for streaming)
 
-**⧉ Overlay** (next to ↻ at the top of Home and the lists) → **Show pop-out
+**▣ Overlay** (next to ↻ at the top of Home and the lists) → **Show pop-out
 window** opens a small window with the current song's cover, title, artist
 and progress. It keeps updating while Cumulus is minimised or in the tray.
 
 - **Show controls:** previous, play/pause, next and volume on the pop-out.
 - **Always on top:** keep it above other windows.
-- Both are in the ⧉ menu and when you right-click the pop-out. Your choices
+- Both are in the ▣ menu and when you right-click the pop-out. Your choices
   are remembered, including whether the pop-out was open. It's off until you
   turn it on.
 - **In OBS:** add a **Window Capture** source and pick

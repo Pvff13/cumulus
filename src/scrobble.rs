@@ -54,15 +54,17 @@ fn entry(name: &str) -> Option<keyring::Entry> {
 }
 
 pub fn load_secret(name: &str) -> Option<String> {
-    entry(name)?.get_password().ok().filter(|s| !s.is_empty())
+    entry(name).and_then(|e| e.get_password().ok()).filter(|s| !s.is_empty()).or_else(|| crate::secret_file::get(name))
 }
 
 pub fn save_secret(name: &str, value: Option<&str>) {
-    if let Some(e) = entry(name) {
-        let _ = match value {
-            Some(v) => e.set_password(v),
-            None => e.delete_credential(),
-        };
+    let saved = entry(name).is_some_and(|e| match value {
+        Some(v) => e.set_password(v).is_ok(),
+        None => e.delete_credential().is_ok(),
+    });
+    // No keyring (WSL, minimal desktops): a private file instead.
+    if !saved || value.is_none() {
+        let _ = crate::secret_file::set(name, value);
     }
 }
 

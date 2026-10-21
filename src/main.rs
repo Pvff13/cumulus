@@ -6,12 +6,16 @@ mod auth;
 mod autostart;
 mod cache;
 mod config;
+mod dialogs;
 mod discord;
 mod download;
+#[cfg(target_os = "linux")]
+mod gtk_thread;
 mod local;
 mod obs;
 mod paths;
 mod scrobble;
+mod secret_file;
 mod player;
 mod signing;
 mod ui;

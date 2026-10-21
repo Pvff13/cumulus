@@ -106,8 +106,11 @@ fn run(app_id: &str, rx: Receiver<Option<Activity>>) {
     }
 }
 
+trait Stream: Read + Write + Send {}
+impl<T: Read + Write + Send> Stream for T {}
+
 struct Pipe {
-    file: std::fs::File,
+    file: Box<dyn Stream>,
     nonce: u64,
 }
 
@@ -168,17 +171,28 @@ impl Pipe {
 }
 
 #[cfg(windows)]
-fn open_ipc(i: u32) -> Result<std::fs::File, String> {
-    std::fs::OpenOptions::new()
+fn open_ipc(i: u32) -> Result<Box<dyn Stream>, String> {
+    let f = std::fs::OpenOptions::new()
         .read(true)
         .write(true)
         .open(format!(r"\\.\pipe\discord-ipc-{i}"))
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    Ok(Box::new(f))
 }
 
-#[cfg(not(windows))]
-fn open_ipc(_i: u32) -> Result<std::fs::File, String> {
-    Err("Discord status is Windows-only for now".into())
+/// Linux: a Unix socket in the runtime dir (or Flatpak/Snap Discord's).
+#[cfg(unix)]
+fn open_ipc(i: u32) -> Result<Box<dyn Stream>, String> {
+    let base = std::env::var("XDG_RUNTIME_DIR").or_else(|_| std::env::var("TMPDIR")).unwrap_or_else(|_| "/tmp".into());
+    let dirs = [base.clone(), format!("{base}/app/com.discordapp.Discord"), format!("{base}/snap.discord")];
+    let mut last = String::from("Discord isn't running");
+    for d in dirs {
+        match std::os::unix::net::UnixStream::connect(format!("{d}/discord-ipc-{i}")) {
+            Ok(s) => return Ok(Box::new(s)),
+            Err(e) => last = e.to_string(),
+        }
+    }
+    Err(last)
 }
 
 /// Debug helper: tries a handshake with `app_id` and reports what Discord said.
