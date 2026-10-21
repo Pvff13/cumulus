@@ -82,7 +82,8 @@ the AppImage file in place, after checking its signature.
 Linux notes:
 - **Tray:** the icon only appears on desktops that show tray icons (KDE,
   Cinnamon, XFCE; GNOME needs the *AppIndicator* extension). Without one,
-  closing the window quits Cumulus.
+  closing the window quits Cumulus. Clicking (or double-clicking) the icon
+  opens Cumulus, middle-click plays/pauses, right-click opens the menu.
 - **Wayland desktops** (KDE Plasma, GNOME): Cumulus runs through XWayland,
   so closing to the tray and global hotkeys work. To run it natively on
   Wayland instead, start it with `CUMULUS_WAYLAND=1`; then the window's X
@@ -435,7 +436,8 @@ and prints the public key for `RELEASE_KEY` in `src/signing.rs`.
 | `symphonia-core`, `-codec-aac`, `-bundle-mp3` | Pure-Rust AAC and MP3 decoding. The HLS playlist and fragmented-MP4 parsing are small hand-written modules (`src/player/hls.rs`, `fmp4.rs`). |
 | `cpal` | Audio output via WASAPI, opened at the track's sample rate so Windows resamples (no resampler dependency). |
 | `souvlaki` | Windows media overlay / media keys (also MPRIS and macOS Now Playing). |
-| `tray-icon` | Tray icon and its menu. |
+| `tray-icon` | Tray icon and its menu (Windows). |
+| `ksni` | Tray icon on Linux (StatusNotifierItem, so clicks reach the app). |
 | `embed-resource` (build only) | Compiles the icon into the .exe with the Windows SDK's `rc.exe`. Not part of the app at runtime. |
 | `ed25519-dalek`, `sha2` | Checking update signatures (and, in debug builds only, signing releases). |
 | `getrandom` | Creating the signing key (debug-only tool). |
