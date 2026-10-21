@@ -114,11 +114,15 @@ impl App {
         let duration = item.track.as_ref().map_or(0.0, |t| t.duration as f64 / 1000.0);
 
         let mut like = None;
+        let mut open_track = None;
         let full = ui.available_width();
         let side = (full * 0.28).clamp(180.0, 340.0);
         ui.horizontal(|ui| {
             // Now playing.
             ui.allocate_ui_with_layout(vec2(side, HEIGHT - 16.0), Layout::left_to_right(Align::Center), |ui| {
+                // Always the full width, so the controls don't shift with
+                // the title's length.
+                ui.set_width(side);
                 let art = item.track.as_ref().and_then(|t| t.artwork().map(str::to_string));
                 let _ = rows::artwork(ui, &self.art, art.as_deref(), 56.0, "large");
                 ui.vertical(|ui| {
@@ -131,10 +135,10 @@ impl App {
                                         .truncate()
                                         .sense(Sense::click()),
                                 )
-                                .on_hover_text("Open on SoundCloud")
+                                .on_hover_text("Track details, related tracks and playlists")
                                 .on_hover_cursor(egui::CursorIcon::PointingHand);
-                            if title.clicked() && !t.permalink_url.is_empty() {
-                                ui.ctx().open_url(egui::OpenUrl::new_tab(&t.permalink_url));
+                            if title.clicked() {
+                                open_track = Some(t.clone());
                             }
                             ui.horizontal(|ui| {
                                 link_label(ui, &t.user.username, &t.user.permalink_url);
@@ -153,6 +157,7 @@ impl App {
             // Transport + seek bar.
             let center = (ui.available_width() - side).max(200.0);
             ui.allocate_ui_with_layout(vec2(center, HEIGHT - 16.0), Layout::top_down(Align::Center), |ui| {
+                ui.set_width(center);
                 ui.add_space(4.0);
                 ui.horizontal(|ui| {
                     let controls = 6.0 * 34.0;
@@ -231,6 +236,9 @@ impl App {
                 ui.label(RichText::new(glyph).color(muted())).on_hover_text("Volume (↑/↓)");
             });
         });
+        if let Some(track) = open_track {
+            self.track_action(rows::TrackAction::OpenTrack, track);
+        }
         if let Some(track) = like {
             self.track_action(rows::TrackAction::LikeOnSoundCloud, track);
         }

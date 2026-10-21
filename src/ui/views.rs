@@ -21,6 +21,7 @@ impl App {
                 let a = a.clone();
                 self.artist_ui(ui, &a);
             }
+            Some(Page::Track(_)) => self.track_ui(ui),
             None => match (self.nav, self.nav.feed()) {
                 (_, Some(kind)) => {
                     let nav = self.nav;
@@ -343,6 +344,7 @@ impl App {
                 }
                 None => {}
             },
+            TrackAction::OpenTrack => self.open_track(track),
             TrackAction::OpenArtist => self.open_artist(ArtistInfo {
                 id: track.user.id,
                 username: track.user.username.clone(),

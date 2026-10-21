@@ -70,6 +70,24 @@ pub struct Track {
     pub purchase_url: Option<String>,
     #[serde(default)]
     pub purchase_title: Option<String>,
+    /// Shown on the track page.
+    #[serde(default)]
+    pub playback_count: Option<u64>,
+    #[serde(default)]
+    pub likes_count: Option<u64>,
+    #[serde(default)]
+    pub reposts_count: Option<u64>,
+    #[serde(default)]
+    pub comment_count: Option<u64>,
+    /// ISO date it was released/published (`display_date`, else `created_at`).
+    #[serde(default)]
+    pub display_date: Option<String>,
+    #[serde(default)]
+    pub created_at: Option<String>,
+    #[serde(default)]
+    pub genre: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
 }
 
 /// A download the artist offers for a track.

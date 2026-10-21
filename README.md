@@ -90,7 +90,14 @@ and every track credits its artist and links back to SoundCloud.
   of that list becomes the queue (playlists included, even the parts not
   loaded yet).
 - Bottom bar: shuffle, previous, play/pause, next, repeat (off / all / one),
-  ∞ autoplay, seek bar and volume. The title and artist link to SoundCloud.
+  ∞ autoplay, seek bar and volume. The title opens the track's page; the
+  artist links to SoundCloud.
+- **Track pages:** click any track's title (or "Track details" in its
+  right-click menu) for a page like soundcloud.com's: artwork, plays, likes,
+  reposts, comments, release date, genre and description; Play, Like, Add to
+  queue, Download (when offered); then **Related tracks** (play one and the
+  list becomes the queue), **In albums** and **In playlists** (20 at a time,
+  with Show more).
 - **Autoplay** (∞, on by default): when the last track of whatever you're
   playing starts, Cumulus adds up to 20 similar tracks (SoundCloud's "related
   tracks", skipping ones already queued) so the music carries on without a

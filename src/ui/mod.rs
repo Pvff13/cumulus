@@ -9,6 +9,7 @@ mod queue;
 mod queue_panel;
 mod rows;
 mod theme;
+mod track_page;
 mod views;
 
 use std::collections::{HashMap, HashSet};
@@ -53,6 +54,8 @@ enum Msg {
     UpdateReady(crate::update::Ready),
     /// Result of pressing "Check for updates".
     UpdateChecked(crate::update::Outcome),
+    /// Part of a track page arrived (details, related tracks, playlists...).
+    TrackPage { id: u64, part: track_page::Part },
     /// An artist-offered download finished (or failed).
     Downloaded { id: u64, title: String, result: Result<std::path::PathBuf, String> },
 }
@@ -128,6 +131,7 @@ struct ArtistInfo {
 enum Page {
     Playlist(PlaylistView),
     Artist(ArtistInfo),
+    Track(track_page::TrackView),
 }
 
 struct Status {
@@ -466,7 +470,7 @@ impl App {
             .iter()
             .filter_map(|p| match p {
                 Page::Artist(a) => Some(a.id),
-                Page::Playlist(_) => None,
+                _ => None,
             })
             .collect();
         self.feeds.retain(|k, _| !matches!(k, FeedKind::Artist(id) if !open.contains(id)));
@@ -516,6 +520,7 @@ impl App {
                     feed.apply(first, cached, result);
                 }
             }
+            Msg::TrackPage { id, part } => self.apply_track_page(id, part),
             Msg::Playlist { id, result } => {
                 if let Some(view) = self.playlist_page(id) {
                     view.apply_playlist(result);
@@ -785,6 +790,7 @@ impl App {
         }
         if added > 0 {
             self.player.set_next(self.queue.peek_next());
+            self.info(format!("Autoplay: added {added} similar tracks to the queue (∞ in the player bar turns it off)"));
         }
     }
 
@@ -1153,6 +1159,18 @@ impl eframe::App for App {
         // Keep the drawn screen unless an action above switched to another one.
         if matches!(self.screen, Screen::Taken) {
             self.screen = screen;
+        }
+        // Debug builds: CUMULUS_DEV_TRACK=<id> opens that track's page once.
+        #[cfg(debug_assertions)]
+        if let Some(id) = std::env::var("CUMULUS_DEV_TRACK").ok().and_then(|s| s.parse::<u64>().ok()) {
+            if matches!(self.screen, Screen::SignedIn(_)) {
+                // SAFETY: only the UI thread reads this dev-only variable.
+                unsafe { std::env::remove_var("CUMULUS_DEV_TRACK") };
+                let stub = format!(r#"{{"id":{id},"title":"…","user":{{}}}}"#);
+                if let Ok(t) = serde_json::from_str::<Track>(&stub) {
+                    self.open_track(Arc::new(t));
+                }
+            }
         }
         // Debug builds: CUMULUS_DEV_XFADE_MENU=1 shows the Crossfade menu's contents
         // in a window (with Transitions expanded) for screenshots.

@@ -7,7 +7,7 @@ pub mod models;
 use std::collections::{HashMap, HashSet};
 
 pub use client::{Api, ApiError};
-use models::{Page, Track, User};
+use models::{Page, Playlist, Track, User};
 
 const PAGE: u32 = 50;
 /// `/tracks?ids=` accepts at most this many ids.
@@ -69,6 +69,42 @@ impl Api {
     /// Tracks similar to `track_id` (what SoundCloud's autoplay plays next).
     pub fn related(&self, track_id: u64) -> Result<Vec<Track>, ApiError> {
         let page: Page<Track> = self.get(&format!("/tracks/{track_id}/related?limit=30"))?;
+        Ok(page.collection)
+    }
+
+    /// One track in full (counts, description...).
+    pub fn track(&self, track_id: u64) -> Result<Track, ApiError> {
+        self.get(&format!("/tracks/{track_id}"))
+    }
+
+    /// Public playlists that include the track, from `url` (None = the
+    /// first page). SoundCloud drops private/deleted playlists from each page
+    /// after picking it, so pages come back short: this keeps following
+    /// `next_href` until it has at least `want` (or runs out). Returns the
+    /// playlists and where to continue from.
+    pub fn track_playlists(
+        &self,
+        track_id: u64,
+        url: Option<String>,
+        want: usize,
+    ) -> Result<(Vec<Playlist>, Option<String>), ApiError> {
+        let mut url = Some(url.unwrap_or_else(|| format!("/tracks/{track_id}/playlists_without_albums?limit=50")));
+        let mut found = Vec::new();
+        for _ in 0..6 {
+            let Some(u) = url.take() else { break };
+            let page: Page<Playlist> = self.get(&u)?;
+            found.extend(page.collection);
+            url = page.next_href;
+            if found.len() >= want {
+                break;
+            }
+        }
+        Ok((found, url))
+    }
+
+    /// Albums/EPs the track is on.
+    pub fn track_albums(&self, track_id: u64) -> Result<Vec<Playlist>, ApiError> {
+        let page: Page<Playlist> = self.get(&format!("/tracks/{track_id}/albums?limit=10"))?;
         Ok(page.collection)
     }
 

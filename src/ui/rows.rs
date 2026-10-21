@@ -113,6 +113,8 @@ pub enum TrackAction {
     OpenOnSoundCloud,
     /// Get the file the artist offers (or open their download link).
     Download,
+    /// The track's own page (details, related tracks, playlists).
+    OpenTrack,
 }
 
 /// A track row: ▶ on the artwork (or double-click) plays, the heart opens
@@ -167,7 +169,16 @@ pub fn track_row(ui: &mut egui::Ui, cx: &RowCtx<'_>, track: &Track, note: Option
             } else if availability == Availability::Drm {
                 title = title.color(muted());
             }
-            ui.add(egui::Label::new(title).truncate().selectable(false));
+            let name = ui
+                .add(egui::Label::new(title).truncate().selectable(false).sense(Sense::click()))
+                .on_hover_cursor(CursorIcon::PointingHand)
+                .on_hover_text("Track details, related tracks and playlists");
+            if name.hovered() {
+                ui.painter().hline(name.rect.x_range(), name.rect.bottom(), Stroke::new(1.0, ui.visuals().text_color()));
+            }
+            if name.clicked() {
+                action = Some(TrackAction::OpenTrack);
+            }
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 4.0;
                 if clickable_label(ui, &track.user.username, "Show this artist's tracks") {
@@ -242,6 +253,7 @@ pub fn track_menu(ui: &mut egui::Ui, track: &Track, liked: bool) -> Option<Track
         None => {}
     }
     ui.separator();
+    item(ui, "Track details", TrackAction::OpenTrack);
     item(ui, &format!("Go to {}", track.user.username), TrackAction::OpenArtist);
     if ui.button("Open on SoundCloud ↗").clicked() {
         ui.ctx().open_url(OpenUrl::new_tab(&track.permalink_url));
