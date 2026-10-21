@@ -1052,6 +1052,7 @@ impl App {
             DesktopEvent::Media(M::Seek(dir)) => self.seek_to(pos + step(&dir, 10.0)),
             DesktopEvent::Media(_) => {}
             // Where windows can't be hidden, the tray icon just brings it forward.
+            DesktopEvent::ShowWindow => self.set_hidden(false),
             DesktopEvent::ToggleWindow if !self.desktop.can_hide_to_tray() => self.set_hidden(false),
             DesktopEvent::ToggleWindow => self.set_hidden(!self.hidden),
             DesktopEvent::Quit => {

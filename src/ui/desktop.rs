@@ -5,7 +5,9 @@ use std::time::{Duration, Instant};
 
 use eframe::egui;
 use souvlaki::{MediaControlEvent, MediaControls, MediaMetadata, MediaPlayback, MediaPosition, PlatformConfig};
+#[cfg(not(target_os = "linux"))]
 use tray_icon::menu::{Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem};
+#[cfg(not(target_os = "linux"))]
 use tray_icon::{MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
 
 use crate::api::models::{Track, sized_art};
@@ -13,12 +15,17 @@ use crate::api::models::{Track, sized_art};
 pub enum DesktopEvent {
     Media(MediaControlEvent),
     ToggleWindow,
+    /// Bring the window back (Linux tray click; never hides, so a
+    /// double-click doesn't open and close it again).
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    ShowWindow,
     PlayPause,
     Next,
     Previous,
     Quit,
 }
 
+#[cfg(not(target_os = "linux"))]
 struct TrayIds {
     show: MenuId,
     play: MenuId,
@@ -27,78 +34,116 @@ struct TrayIds {
     quit: MenuId,
 }
 
-/// The tray icon and its Play/Pause item. On Linux they live on the GTK
-/// thread (GTK isn't thread-safe), so this only forwards changes there.
+/// The tray icon and its Play/Pause item.
 #[cfg(not(target_os = "linux"))]
 struct Tray {
     icon: TrayIcon,
     play: MenuItem,
 }
 
-#[cfg(target_os = "linux")]
-struct Tray;
-
-#[cfg(target_os = "linux")]
-thread_local! {
-    /// On the GTK thread only.
-    static GTK_TRAY: std::cell::RefCell<Option<(TrayIcon, MenuItem)>> = const { std::cell::RefCell::new(None) };
-}
-
+#[cfg(not(target_os = "linux"))]
 impl Tray {
-    #[cfg(not(target_os = "linux"))]
     fn new(send: impl Fn(DesktopEvent) + Send + Sync + Clone + 'static) -> Option<Self> {
         tray(send).map(|(icon, play)| Self { icon, play })
     }
 
-    #[cfg(target_os = "linux")]
-    fn new(send: impl Fn(DesktopEvent) + Send + Sync + Clone + 'static) -> Option<Self> {
-        let made = crate::gtk_thread::run(move || {
-            // No tray host (e.g. GNOME without the AppIndicator extension, WSL):
-            // an icon would be invisible, so don't make one.
-            if !crate::gtk_thread::tray_host_present() {
-                return false;
-            }
-            match tray(send) {
-                Some(t) => {
-                    GTK_TRAY.with(|c| *c.borrow_mut() = Some(t));
-                    true
-                }
-                None => false,
-            }
-        });
-        made.unwrap_or(false).then_some(Self)
-    }
-
-    #[cfg(not(target_os = "linux"))]
     fn set_tooltip(&self, tip: String) {
         let _ = self.icon.set_tooltip(Some(tip));
     }
 
-    #[cfg(not(target_os = "linux"))]
     fn set_play_text(&self, text: &'static str) {
         self.play.set_text(text);
     }
+}
 
-    #[cfg(target_os = "linux")]
-    fn set_tooltip(&self, tip: String) {
-        crate::gtk_thread::spawn(move || {
-            GTK_TRAY.with(|c| {
-                if let Some((icon, _)) = c.borrow().as_ref() {
-                    let _ = icon.set_tooltip(Some(tip));
-                }
-            })
-        });
+/// Linux: a StatusNotifierItem (KDE's tray protocol, also used by GNOME's
+/// AppIndicator extension). Unlike AppIndicator it reports clicks, so a left
+/// click shows/hides Cumulus and right click opens the menu.
+#[cfg(target_os = "linux")]
+struct Tray(ksni::blocking::Handle<Sni>);
+
+#[cfg(target_os = "linux")]
+struct Sni {
+    send: Box<dyn Fn(DesktopEvent) + Send + Sync>,
+    playing: bool,
+    tip: String,
+    icon: Vec<ksni::Icon>,
+}
+
+#[cfg(target_os = "linux")]
+impl ksni::Tray for Sni {
+    fn id(&self) -> String {
+        "cumulus".into()
     }
 
-    #[cfg(target_os = "linux")]
+    fn title(&self) -> String {
+        "Cumulus".into()
+    }
+
+    fn category(&self) -> ksni::Category {
+        ksni::Category::ApplicationStatus
+    }
+
+    fn icon_pixmap(&self) -> Vec<ksni::Icon> {
+        self.icon.clone()
+    }
+
+    fn tool_tip(&self) -> ksni::ToolTip {
+        ksni::ToolTip { title: self.tip.clone(), ..Default::default() }
+    }
+
+    /// Left click (or double-click): open Cumulus, like other KDE tray apps.
+    fn activate(&mut self, _x: i32, _y: i32) {
+        (self.send)(DesktopEvent::ShowWindow);
+    }
+
+    /// Middle click: play/pause.
+    fn secondary_activate(&mut self, _x: i32, _y: i32) {
+        (self.send)(DesktopEvent::PlayPause);
+    }
+
+    fn menu(&self) -> Vec<ksni::MenuItem<Self>> {
+        use ksni::menu::StandardItem;
+        let item = |label: &str, event: fn() -> DesktopEvent| -> ksni::MenuItem<Self> {
+            StandardItem { label: label.into(), activate: Box::new(move |t: &mut Self| (t.send)(event())), ..Default::default() }.into()
+        };
+        vec![
+            item("Show / hide Cumulus", || DesktopEvent::ToggleWindow),
+            ksni::MenuItem::Separator,
+            item(if self.playing { "Pause" } else { "Play" }, || DesktopEvent::PlayPause),
+            item("Next", || DesktopEvent::Next),
+            item("Previous", || DesktopEvent::Previous),
+            ksni::MenuItem::Separator,
+            item("Quit", || DesktopEvent::Quit),
+        ]
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl Tray {
+    /// None when there's no tray host (GNOME without the extension, WSL): an
+    /// icon would be invisible, so Cumulus mustn't hide to it.
+    fn new(send: impl Fn(DesktopEvent) + Send + Sync + Clone + 'static) -> Option<Self> {
+        use ksni::blocking::TrayMethods;
+        let size = 64;
+        // RGBA -> ARGB, as the protocol wants.
+        let data = super::icon::rgba(size).chunks_exact(4).flat_map(|p| [p[3], p[0], p[1], p[2]]).collect();
+        let sni = Sni {
+            send: Box::new(send),
+            playing: false,
+            tip: "Cumulus".into(),
+            icon: vec![ksni::Icon { width: size as i32, height: size as i32, data }],
+        };
+        sni.spawn().ok().map(Self)
+    }
+
+    fn set_tooltip(&self, tip: String) {
+        self.0.update(|t| t.tip = tip);
+    }
+
     fn set_play_text(&self, text: &'static str) {
-        crate::gtk_thread::spawn(move || {
-            GTK_TRAY.with(|c| {
-                if let Some((_, play)) = c.borrow().as_ref() {
-                    play.set_text(text);
-                }
-            })
-        });
+        let playing = text == "Pause";
+        self.0.update(|t| t.playing = playing);
     }
 }
 
@@ -203,6 +248,7 @@ fn media_controls(
     Some(controls)
 }
 
+#[cfg(not(target_os = "linux"))]
 fn tray(send: impl Fn(DesktopEvent) + Send + Sync + Clone + 'static) -> Option<(TrayIcon, MenuItem)> {
     let show = MenuItem::new("Show / hide Cumulus", true, None);
     let play = MenuItem::new("Play", true, None);

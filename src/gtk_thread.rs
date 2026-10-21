@@ -1,6 +1,6 @@
 //! Linux only: GTK can only be used from one thread, and eframe's window
 //! isn't a GTK window. So one background thread runs GTK for everything that
-//! needs it (the tray icon and file pickers); other threads hand it work.
+//! needs it (file pickers); other threads hand it work.
 
 use std::sync::OnceLock;
 use std::sync::mpsc::{Sender, channel};
@@ -54,26 +54,4 @@ pub fn run<R: Send + 'static>(f: impl FnOnce() -> R + Send + 'static) -> Option<
         return None;
     }
     rx.recv().ok()
-}
-
-/// Whether a tray (StatusNotifier) host is running. Without one a tray icon
-/// would be invisible, so Cumulus mustn't hide to it. Runs on the GTK thread.
-pub fn tray_host_present() -> bool {
-    {
-        let Ok(bus) = gtk::gio::bus_get_sync(gtk::gio::BusType::Session, gtk::gio::Cancellable::NONE) else {
-            return false;
-        };
-        let reply = bus.call_sync(
-            Some("org.freedesktop.DBus"),
-            "/org/freedesktop/DBus",
-            "org.freedesktop.DBus",
-            "NameHasOwner",
-            Some(&("org.kde.StatusNotifierWatcher",).into()),
-            Some(glib::VariantTy::new("(b)").expect("valid type")),
-            gtk::gio::DBusCallFlags::NONE,
-            1000,
-            gtk::gio::Cancellable::NONE,
-        );
-        reply.ok().and_then(|v| v.get::<(bool,)>()).is_some_and(|(b,)| b)
-    }
 }

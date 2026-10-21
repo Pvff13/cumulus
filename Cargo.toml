@@ -36,7 +36,6 @@ symphonia = { version = "0.6", default-features = false, features = ["aac", "mp3
 cpal = "0.18"
 rtrb = "0.4"
 souvlaki = "0.8.3"
-tray-icon = "0.26.1"
 raw-window-handle = "0.6"
 ed25519-dalek = "3"
 sha2 = "0.11"
@@ -46,6 +45,10 @@ getrandom = "0.3"
 # font to fall back on, and they keep icons looking the same everywhere.
 egui = { version = "0.37.0", default-features = false, features = ["monochrome_emoji_fonts"] }
 
+[target.'cfg(not(target_os = "linux"))'.dependencies]
+# Windows tray icon (Linux uses ksni below, which reports clicks).
+tray-icon = "0.26.1"
+
 [target.'cfg(windows)'.dependencies]
 # Native Windows file pickers (Linux uses GTK's, see dialogs.rs).
 rfd = "0.15"
@@ -54,6 +57,9 @@ rfd = "0.15"
 eframe = { version = "0.37.0", default-features = false, features = ["glow", "default_fonts", "links", "clipboard", "x11", "wayland"] }
 # Tray icon, file pickers and the sign-in window run on GTK (same version tray-icon and wry use).
 gtk = "0.18"
+# Tray icon via StatusNotifierItem (KDE / GNOME with AppIndicator): left
+# click shows/hides, right click opens the menu. AppIndicator can't do clicks.
+ksni = { version = "0.3.7", default-features = false, features = ["blocking", "async-io"] }
 
 [profile.release]
 opt-level = 3
