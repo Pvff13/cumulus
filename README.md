@@ -308,15 +308,17 @@ WAV, AIFF, OGG Vorbis and ALAC.
   tabs; it searches as you type. Clicking a person, or an artist's name on
   any track, shows their uploads in the app (with a link to their SoundCloud
   page).
-- **Likes and playlists are read-only in the app.** ♥ marks tracks you've
-  liked. Clicking a heart, or right-click → *Like / Add to playlist on
-  SoundCloud ↗*, opens the track on soundcloud.com in your browser so you can
-  do it there. When you switch back to Cumulus it re-reads your likes (and
+- **Liking and adding to playlists** happen on SoundCloud's own page. ♥
+  marks tracks you've liked. Clicking a heart, or right-click → *Like…* /
+  *Add to playlist…*, opens the track's soundcloud.com page in a Cumulus
+  window (signed in, like the sign-in window); click Like or More → Add to
+  playlist there, then close it. Cumulus then re-reads your likes (and
   refreshes the Likes or Playlists list).
 
   Why: SoundCloud puts every account change behind a DataDome bot check
   (tested: liking returned a CAPTCHA challenge). Cumulus doesn't try to get
-  around that, so it never writes to your account at all.
+  around that, so it never writes to your account itself: you do it, on
+  SoundCloud's page, and answer any check yourself.
 
 ## Desktop integration
 

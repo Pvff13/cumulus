@@ -210,8 +210,8 @@ impl App {
                             action = Some((if drm { TrackAction::OpenOnSoundCloud } else { TrackAction::Play }, track.clone()));
                         }
                         let liked = self.liked.contains(&track.id);
-                        let like = if liked { "♥  Liked ↗" } else { "♡  Like ↗" };
-                        if ui.button(like).on_hover_text("Opens SoundCloud to (un)like it there").clicked() {
+                        let like = if liked { "♥  Liked" } else { "♡  Like" };
+                        if ui.button(like).on_hover_text("Opens a SoundCloud window to (un)like it there").clicked() {
                             action = Some((TrackAction::LikeOnSoundCloud, track.clone()));
                         }
                         if ui.button("Add to queue").clicked() {

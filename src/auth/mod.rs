@@ -73,20 +73,26 @@ pub fn normalize_pasted_token(s: &str) -> Option<String> {
 /// Runs the sign-in window as a child process and blocks until it closes.
 /// Returns Ok(true) if a token was captured and saved.
 pub fn run_login_process() -> Result<bool, String> {
-    run_child(login::LOGIN_ARG)
+    run_child(&[login::LOGIN_ARG])
+}
+
+/// Opens a soundcloud.com page in a Cumulus window that shares the sign-in
+/// window's browser (so you're signed in there). Blocks until it's closed.
+pub fn open_page(url: &str) -> Result<(), String> {
+    run_child(&[login::PAGE_ARG, url]).map(|_| ())
 }
 
 /// Tries to get a fresh login without asking: loads soundcloud.com in a
 /// hidden window with the sign-in window's saved browser profile. Works only
 /// if SoundCloud still remembers that browser. True if a new token was saved.
 pub fn renew_login() -> bool {
-    matches!(run_child(login::RENEW_ARG), Ok(true))
+    matches!(run_child(&[login::RENEW_ARG]), Ok(true))
 }
 
-fn run_child(arg: &str) -> Result<bool, String> {
+fn run_child(args: &[&str]) -> Result<bool, String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     let mut child = Command::new(exe)
-        .arg(arg)
+        .args(args)
         .stdin(Stdio::piped())
         .spawn()
         .map_err(|e| format!("could not open sign-in window: {e}"))?;

@@ -64,6 +64,8 @@ enum Msg {
     LoginWindowClosed(Result<bool, String>),
     /// Result of trying to recover from a refused login.
     LoginRenewal(Renewal),
+    /// The in-app soundcloud.com window closed (or failed to open).
+    SoundCloudPageClosed(rows::TrackAction, Option<String>),
     Feed { kind: FeedKind, generation: u32, first: bool, cached: bool, result: Result<RowPage, ApiError> },
     Playlist { id: u64, result: Result<Playlist, ApiError> },
     Tracks { playlist_id: u64, asked: Vec<u64>, result: Result<HashMap<u64, Track>, ApiError> },
@@ -960,6 +962,11 @@ impl App {
             Msg::Session(Ok(None)) => self.screen = Screen::SignedOut { error: None },
             Msg::Session(Err(ApiError::Unauthorized)) => self.login_refused(),
             Msg::LoginRenewal(result) => self.login_renewal(result),
+            Msg::SoundCloudPageClosed(action, None) => {
+                self.recheck_on_focus = None;
+                self.recheck_library(action);
+            }
+            Msg::SoundCloudPageClosed(_, Some(e)) => self.error(format!("Couldn't open the SoundCloud window: {e}")),
             Msg::Session(Err(e)) => self.screen = Screen::Problem(e.to_string()),
             Msg::LoginWindowClosed(Ok(true)) => {
                 self.screen = Screen::Starting;

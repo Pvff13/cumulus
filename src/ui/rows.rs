@@ -119,7 +119,7 @@ pub struct RowCtx<'a> {
 pub enum TrackAction {
     Play,
     /// Liking needs SoundCloud's own site (it puts writes behind a browser
-    /// check), so these open the track page there.
+    /// check), so these open the track page in a SoundCloud window.
     LikeOnSoundCloud,
     AddToPlaylistOnSoundCloud,
     PlayNext,
@@ -271,9 +271,9 @@ pub fn track_menu(ui: &mut egui::Ui, track: &Track, liked: bool, in_local_list: 
     item(ui, "Play next", TrackAction::PlayNext);
     item(ui, "Add to queue", TrackAction::AddToQueue);
     ui.separator();
-    let like = if liked { "♥  Unlike on SoundCloud ↗" } else { "♡  Like on SoundCloud ↗" };
+    let like = if liked { "♥  Unlike…" } else { "♡  Like…" };
     item(ui, like, TrackAction::LikeOnSoundCloud);
-    item(ui, "Add to playlist on SoundCloud ↗", TrackAction::AddToPlaylistOnSoundCloud);
+    item(ui, "Add to playlist…", TrackAction::AddToPlaylistOnSoundCloud);
     match track.download() {
         Some(Download::File) => item(ui, "⬇  Download", TrackAction::Download),
         Some(Download::Link { label, .. }) => item(ui, &format!("⬇  {label} ↗"), TrackAction::Download),
@@ -326,9 +326,9 @@ pub fn track_menu(ui: &mut egui::Ui, track: &Track, liked: bool, in_local_list: 
 /// ♥ (liked) / ♡. Clicking opens the track on SoundCloud to (un)like it there.
 pub fn heart(ui: &mut egui::Ui, liked: bool) -> Response {
     let (glyph, color, tip) = if liked {
-        ("♥", accent(), "Liked. Opens SoundCloud to unlike")
+        ("♥", accent(), "Liked. Opens a SoundCloud window to unlike")
     } else {
-        ("♡", muted(), "Opens SoundCloud to like")
+        ("♡", muted(), "Opens a SoundCloud window to like")
     };
     ui.add(egui::Label::new(RichText::new(glyph).color(color).size(16.0)).sense(Sense::click()))
         .on_hover_cursor(CursorIcon::PointingHand)

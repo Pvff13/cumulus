@@ -30,10 +30,16 @@ fn main() {
     // The sign-in window runs as a separate process (see auth::login) so the
     // WebView2 engine is fully torn down once the token has been captured.
     if std::env::args().any(|a| a == auth::login::LOGIN_ARG) {
-        std::process::exit(auth::login::run(false));
+        std::process::exit(auth::login::run(auth::login::Mode::SignIn));
     }
     if std::env::args().any(|a| a == auth::login::RENEW_ARG) {
-        std::process::exit(auth::login::run(true));
+        std::process::exit(auth::login::run(auth::login::Mode::Renew));
+    }
+    if let Some(url) = std::env::args().skip_while(|a| a != auth::login::PAGE_ARG).nth(1) {
+        if !auth::login::is_soundcloud_page(&url) {
+            std::process::exit(auth::login::EXIT_CANCELLED);
+        }
+        std::process::exit(auth::login::run(auth::login::Mode::Page(url)));
     }
     #[cfg(debug_assertions)]
     if let Some(id) = std::env::args().skip_while(|a| a != "--discord-probe").nth(1) {

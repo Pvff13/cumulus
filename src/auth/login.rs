@@ -6,6 +6,10 @@
 //! `cumulus --renew` is the same with the window hidden: it opens
 //! soundcloud.com with the saved browser profile and waits briefly for the
 //! site to hand out a new token, for when the old one has expired.
+//!
+//! `cumulus --page <url>` opens a soundcloud.com page in the same browser
+//! profile (so you're signed in) and just stays open until you close it:
+//! liking and playlist edits are done there by you, on SoundCloud's own page.
 
 use std::io::Read;
 use std::sync::Arc;
@@ -30,6 +34,39 @@ use wry::{WebContext, WebViewBuilder};
 
 pub const LOGIN_ARG: &str = "--login";
 pub const RENEW_ARG: &str = "--renew";
+pub const PAGE_ARG: &str = "--page";
+
+/// What the webview process is for.
+pub enum Mode {
+    /// The sign-in window.
+    SignIn,
+    /// Hidden: try to pick up a new token.
+    Renew,
+    /// A soundcloud.com page, open until closed.
+    Page(String),
+}
+
+impl Mode {
+    fn url(&self) -> &str {
+        match self {
+            Mode::SignIn => SIGNIN_URL,
+            Mode::Renew => COOKIE_URL,
+            Mode::Page(url) => url,
+        }
+    }
+
+    fn title(&self) -> &'static str {
+        match self {
+            Mode::Page(_) => "Cumulus - SoundCloud",
+            _ => "Cumulus - sign in with your SoundCloud account",
+        }
+    }
+}
+
+/// Only soundcloud.com pages may be opened with `--page`.
+pub fn is_soundcloud_page(url: &str) -> bool {
+    url.strip_prefix("https://soundcloud.com/").is_some_and(|rest| !rest.contains(char::is_whitespace))
+}
 pub const EXIT_CANCELLED: i32 = 2;
 const EXIT_FAILED: i32 = 3;
 
@@ -58,6 +95,7 @@ struct Login {
     parent_gone: Arc<AtomicBool>,
     /// Hidden renewal: give up at this time.
     renew_until: Option<Instant>,
+    mode: Mode,
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -68,6 +106,9 @@ impl Login {
         }
         if self.renew_until.is_some_and(|t| Instant::now() > t) {
             return el.exit();
+        }
+        if let Mode::Page(_) = self.mode {
+            return;
         }
         let Some(wv) = &self.webview else { return };
         let Ok(cookies) = wv.cookies_for_url(COOKIE_URL) else { return };
@@ -91,7 +132,7 @@ impl ApplicationHandler for Login {
         }
         let renew = self.renew_until.is_some();
         let attrs = Window::default_attributes()
-            .with_title("Cumulus - sign in with your SoundCloud account")
+            .with_title(self.mode.title())
             .with_inner_size(LogicalSize::new(1000.0, 820.0))
             .with_visible(!renew);
         let window = match el.create_window(attrs) {
@@ -103,7 +144,7 @@ impl ApplicationHandler for Login {
             }
         };
         match WebViewBuilder::new_with_web_context(&mut self.ctx)
-            .with_url(if renew { COOKIE_URL } else { SIGNIN_URL })
+            .with_url(self.mode.url())
             .build(&window)
         {
             Ok(wv) => self.webview = Some(wv),
@@ -159,7 +200,7 @@ fn watch_parent() -> Arc<AtomicBool> {
 
 /// Linux: a GTK window with WebKitGTK inside.
 #[cfg(target_os = "linux")]
-pub fn run(renew: bool) -> i32 {
+pub fn run(mode: Mode) -> i32 {
     use std::cell::Cell;
     use std::rc::Rc;
 
@@ -176,17 +217,18 @@ pub fn run(renew: bool) -> i32 {
         eprintln!("cumulus login: no display");
         return EXIT_FAILED;
     }
+    let renew = matches!(mode, Mode::Renew);
+    let page = matches!(mode, Mode::Page(_));
     let parent_gone = watch_parent();
     // Renewal: an offscreen window, so the page loads but nothing appears.
     let window: gtk::Window =
         if renew { gtk::OffscreenWindow::new().upcast() } else { gtk::Window::new(gtk::WindowType::Toplevel) };
-    window.set_title("Cumulus - sign in with your SoundCloud account");
+    window.set_title(mode.title());
     window.set_default_size(1000, 820);
     let container = gtk::Box::new(gtk::Orientation::Vertical, 0);
     window.add(&container);
     let mut ctx = WebContext::new(Some(crate::paths::webview_dir()));
-    let url = if renew { COOKIE_URL } else { SIGNIN_URL };
-    let webview = match WebViewBuilder::new_with_web_context(&mut ctx).with_url(url).build_gtk(&container) {
+    let webview = match WebViewBuilder::new_with_web_context(&mut ctx).with_url(mode.url()).build_gtk(&container) {
         Ok(wv) => wv,
         Err(e) => {
             eprintln!("cumulus login: webview: {e}");
@@ -209,6 +251,9 @@ pub fn run(renew: bool) -> i32 {
             gtk::main_quit();
             return glib::ControlFlow::Break;
         }
+        if page {
+            return glib::ControlFlow::Continue;
+        }
         let Ok(cookies) = webview.cookies_for_url(COOKIE_URL) else { return glib::ControlFlow::Continue };
         let Some(token) = fresh_token(&cookies) else { return glib::ControlFlow::Continue };
         match super::save_token(&token) {
@@ -225,10 +270,10 @@ pub fn run(renew: bool) -> i32 {
     code.get()
 }
 
-/// Entry point for `cumulus --login` (or hidden, `--renew`). Returns the
+/// Entry point for `cumulus --login` (or `--renew`, `--page`). Returns the
 /// process exit code.
 #[cfg(not(target_os = "linux"))]
-pub fn run(renew: bool) -> i32 {
+pub fn run(mode: Mode) -> i32 {
     let event_loop = match EventLoop::new() {
         Ok(el) => el,
         Err(e) => {
@@ -243,7 +288,8 @@ pub fn run(renew: bool) -> i32 {
         webview: None,
         exit_code: EXIT_CANCELLED,
         parent_gone,
-        renew_until: renew.then(|| Instant::now() + RENEW_TIMEOUT),
+        renew_until: matches!(mode, Mode::Renew).then(|| Instant::now() + RENEW_TIMEOUT),
+        mode,
     };
     if let Err(e) = event_loop.run_app(&mut app) {
         eprintln!("cumulus login: {e}");

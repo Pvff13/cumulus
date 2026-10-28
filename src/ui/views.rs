@@ -441,12 +441,19 @@ impl App {
             TrackAction::Play => self.play_list(vec![QueueItem { id: track.id, track: Some(track) }], 0),
             TrackAction::LikeOnSoundCloud | TrackAction::AddToPlaylistOnSoundCloud => {
                 // SoundCloud puts likes and playlist edits behind a browser
-                // check, so these are done on soundcloud.com itself. Likes
-                // are re-read when you come back to this window.
-                self.ctx.open_url(egui::OpenUrl::new_tab(&track.permalink_url));
-                let what = if action == TrackAction::LikeOnSoundCloud { "like" } else { "add it to a playlist" };
-                self.info(format!("Opened “{title}” on SoundCloud to {what} there"));
+                // check, so you do them on soundcloud.com's own page, in a
+                // Cumulus window signed in like the sign-in window. Your
+                // likes / playlists are re-read when it closes (or when you
+                // come back to this window).
+                let what = if action == TrackAction::LikeOnSoundCloud {
+                    "click Like there"
+                } else {
+                    "use More → Add to playlist there"
+                };
+                self.info(format!("Opened “{title}” in a SoundCloud window: {what}, then close it"));
                 self.recheck_on_focus = Some(action);
+                let url = track.permalink_url.clone();
+                self.spawn(move |_, send| send(Msg::SoundCloudPageClosed(action, crate::auth::open_page(&url).err())));
             }
             TrackAction::PlayNext | TrackAction::AddToQueue => {
                 let was_empty = self.queue.is_empty();
