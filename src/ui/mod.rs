@@ -45,9 +45,25 @@ use queue::Queue;
 use theme::{accent, muted, sidebar};
 
 /// Results coming back from worker threads.
+/// How recovering from a refused login went.
+#[derive(Debug, Clone, Copy)]
+enum Renewal {
+    /// The login still works (only that one request was refused).
+    StillValid,
+    /// A new token was saved.
+    Renewed,
+    /// SoundCloud wants you to sign in again.
+    Failed,
+}
+
+/// Don't try to renew the login more often than this.
+const RENEW_AGAIN_AFTER: Duration = Duration::from_secs(10 * 60);
+
 enum Msg {
     Session(Result<Option<User>, ApiError>),
     LoginWindowClosed(Result<bool, String>),
+    /// Result of trying to recover from a refused login.
+    LoginRenewal(Renewal),
     Feed { kind: FeedKind, generation: u32, first: bool, cached: bool, result: Result<RowPage, ApiError> },
     Playlist { id: u64, result: Result<Playlist, ApiError> },
     Tracks { playlist_id: u64, asked: Vec<u64>, result: Result<HashMap<u64, Track>, ApiError> },
@@ -293,6 +309,11 @@ pub struct App {
     /// playlist: re-read their library when this window is focused again.
     recheck_on_focus: Option<rows::TrackAction>,
     was_focused: bool,
+    /// A refused login is being checked / renewed in the background.
+    renewing: bool,
+    /// When the login was last renewed (or failed to), so a token that keeps
+    /// being refused leads to the sign-in screen rather than a loop.
+    last_renewal: Option<Instant>,
 
     search_text: String,
     /// The query the search results are for.
@@ -510,6 +531,8 @@ impl App {
             liked: HashSet::new(),
             recheck_on_focus: None,
             was_focused: true,
+            renewing: false,
+            last_renewal: None,
             search_text: String::new(),
             search_query: String::new(),
             search_kind: SearchKind::Tracks,
@@ -722,13 +745,66 @@ impl App {
         self.spawn(|_, send| send(Msg::LoginWindowClosed(auth::run_login_process())));
     }
 
+    /// SoundCloud refused the login. Before asking you to sign in again:
+    /// check it really has expired (one request can be refused on its own),
+    /// then try to renew it quietly with the sign-in window's saved browser.
+    fn login_refused(&mut self) {
+        if self.renewing {
+            return;
+        }
+        if self.last_renewal.is_some_and(|t| t.elapsed() < RENEW_AGAIN_AFTER) {
+            return self.sign_out(Some(ApiError::Unauthorized.to_string()));
+        }
+        self.renewing = true;
+        let signed_in = self.me != 0;
+        self.spawn(move |api, send| {
+            if signed_in && api.me().is_ok() {
+                return send(Msg::LoginRenewal(Renewal::StillValid));
+            }
+            if let Ok(Some(token)) = auth::load_token() {
+                auth::reject(&token);
+            }
+            send(Msg::LoginRenewal(if auth::renew_login() { Renewal::Renewed } else { Renewal::Failed }));
+        });
+    }
+
+    fn login_renewal(&mut self, result: Renewal) {
+        self.renewing = false;
+        match result {
+            Renewal::StillValid => {}
+            Renewal::Failed => {
+                self.last_renewal = Some(Instant::now());
+                self.sign_out(Some(ApiError::Unauthorized.to_string()));
+            }
+            Renewal::Renewed => {
+                self.last_renewal = Some(Instant::now());
+                if self.me == 0 {
+                    self.screen = Screen::Starting;
+                    return self.check_session();
+                }
+                self.api.set_token(auth::load_token().ok().flatten());
+                self.info("Your SoundCloud login was renewed.");
+                self.load_liked();
+                let started: Vec<FeedKind> = self.feeds.iter().filter(|(_, f)| f.started).map(|(k, _)| *k).collect();
+                for kind in started {
+                    self.load_feed(kind, true);
+                }
+                if self.home.started {
+                    self.load_home();
+                }
+            }
+        }
+    }
+
     fn sign_out(&mut self, error: Option<String>) {
         self.player.stop();
         self.queue = Queue::default();
         self.resume_at = None;
         self.saved_session = None;
         session::Saved::clear();
-        auth::sign_out();
+        // Signing out yourself forgets the sign-in browser too; an expired
+        // login keeps it, so SoundCloud may remember you next time.
+        auth::sign_out(error.is_none());
         self.api.set_token(None);
         self.feeds.clear();
         self.home = home::HomeState::default();
@@ -864,6 +940,16 @@ impl App {
         if cfg!(debug_assertions) {
             anonymize(&mut msg);
         }
+        // A refused login: try to renew it; the request itself shows its error.
+        if matches!(
+            msg,
+            Msg::Feed { result: Err(ApiError::Unauthorized), .. }
+                | Msg::Playlist { result: Err(ApiError::Unauthorized), .. }
+                | Msg::Tracks { result: Err(ApiError::Unauthorized), .. }
+                | Msg::Home { result: Err(ApiError::Unauthorized), .. }
+        ) {
+            self.login_refused();
+        }
         match msg {
             Msg::Session(Ok(Some(user))) => {
                 self.me = user.id;
@@ -872,7 +958,8 @@ impl App {
                 self.restore_session();
             }
             Msg::Session(Ok(None)) => self.screen = Screen::SignedOut { error: None },
-            Msg::Session(Err(ApiError::Unauthorized)) => self.sign_out(Some(ApiError::Unauthorized.to_string())),
+            Msg::Session(Err(ApiError::Unauthorized)) => self.login_refused(),
+            Msg::LoginRenewal(result) => self.login_renewal(result),
             Msg::Session(Err(e)) => self.screen = Screen::Problem(e.to_string()),
             Msg::LoginWindowClosed(Ok(true)) => {
                 self.screen = Screen::Starting;
@@ -880,11 +967,6 @@ impl App {
             }
             Msg::LoginWindowClosed(Ok(false)) => self.screen = Screen::SignedOut { error: None },
             Msg::LoginWindowClosed(Err(e)) => self.screen = Screen::SignedOut { error: Some(e) },
-            Msg::Feed { result: Err(ApiError::Unauthorized), .. }
-            | Msg::Playlist { result: Err(ApiError::Unauthorized), .. }
-            | Msg::Tracks { result: Err(ApiError::Unauthorized), .. } => {
-                self.sign_out(Some(ApiError::Unauthorized.to_string()))
-            }
             Msg::Feed { kind, generation, first, cached, result } => {
                 if let Some(feed) = self.feeds.get_mut(&kind).filter(|f| f.generation == generation) {
                     feed.apply(first, cached, result);
@@ -960,7 +1042,6 @@ impl App {
                     Outcome::Problem(why) => self.error(format!("Couldn't check for updates: {why}")),
                 }
             }
-            Msg::Home { result: Err(ApiError::Unauthorized), .. } => self.sign_out(Some(ApiError::Unauthorized.to_string())),
             Msg::Home { cached, result } => self.home_loaded(cached, result),
             Msg::History(Ok(tracks)) => {
                 let hidden = &self.hide_rules;

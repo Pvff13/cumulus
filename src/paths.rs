@@ -2,6 +2,13 @@ use std::path::PathBuf;
 
 /// Per-user data directory, e.g. `%LOCALAPPDATA%\Cumulus` on Windows.
 pub fn data_dir() -> PathBuf {
+    // Debug builds: CUMULUS_DEV_DATA points at a throwaway folder for tests.
+    #[cfg(debug_assertions)]
+    if let Some(dir) = std::env::var_os("CUMULUS_DEV_DATA") {
+        let dir = PathBuf::from(dir);
+        let _ = std::fs::create_dir_all(&dir);
+        return dir;
+    }
     let base = dirs::data_local_dir().unwrap_or_else(std::env::temp_dir);
     let dir = base.join("Cumulus");
     let _ = std::fs::create_dir_all(&dir);

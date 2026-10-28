@@ -33,13 +33,34 @@ pub fn save_token(token: &str) -> Result<(), String> {
     }
 }
 
-/// Forget the token and the sign-in window's browser profile (site cookies).
-pub fn sign_out() {
+/// Forget the token. `forget_browser` also clears the sign-in window's browser
+/// profile (site cookies); an expired login keeps it, so SoundCloud may still
+/// remember you and the next sign-in can be quick (or automatic).
+pub fn sign_out(forget_browser: bool) {
     if let Ok(e) = entry() {
         let _ = e.delete_credential();
     }
     let _ = crate::secret_file::set(ACCOUNT, None);
-    let _ = std::fs::remove_dir_all(crate::paths::webview_dir());
+    if forget_browser {
+        let _ = std::fs::remove_dir_all(crate::paths::webview_dir());
+    }
+}
+
+fn fingerprint(token: &str) -> String {
+    use md5::{Digest, Md5};
+    format!("{:x}", Md5::digest(token.trim().as_bytes()))
+}
+
+/// Remembers that SoundCloud refused this token (only a hash is saved).
+pub fn reject(token: &str) {
+    let mut config = crate::config::Config::load();
+    config.rejected_login = Some(fingerprint(token));
+    config.save();
+}
+
+/// Whether this is a token SoundCloud already refused.
+pub fn is_rejected(token: &str) -> bool {
+    crate::config::Config::load().rejected_login.is_some_and(|f| f == fingerprint(token))
 }
 
 /// Accepts either a bare token or the "OAuth 2-xxxx" header form someone
@@ -52,9 +73,20 @@ pub fn normalize_pasted_token(s: &str) -> Option<String> {
 /// Runs the sign-in window as a child process and blocks until it closes.
 /// Returns Ok(true) if a token was captured and saved.
 pub fn run_login_process() -> Result<bool, String> {
+    run_child(login::LOGIN_ARG)
+}
+
+/// Tries to get a fresh login without asking: loads soundcloud.com in a
+/// hidden window with the sign-in window's saved browser profile. Works only
+/// if SoundCloud still remembers that browser. True if a new token was saved.
+pub fn renew_login() -> bool {
+    matches!(run_child(login::RENEW_ARG), Ok(true))
+}
+
+fn run_child(arg: &str) -> Result<bool, String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     let mut child = Command::new(exe)
-        .arg(login::LOGIN_ARG)
+        .arg(arg)
         .stdin(Stdio::piped())
         .spawn()
         .map_err(|e| format!("could not open sign-in window: {e}"))?;

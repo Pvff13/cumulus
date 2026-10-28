@@ -30,7 +30,10 @@ fn main() {
     // The sign-in window runs as a separate process (see auth::login) so the
     // WebView2 engine is fully torn down once the token has been captured.
     if std::env::args().any(|a| a == auth::login::LOGIN_ARG) {
-        std::process::exit(auth::login::run());
+        std::process::exit(auth::login::run(false));
+    }
+    if std::env::args().any(|a| a == auth::login::RENEW_ARG) {
+        std::process::exit(auth::login::run(true));
     }
     #[cfg(debug_assertions)]
     if let Some(id) = std::env::args().skip_while(|a| a != "--discord-probe").nth(1) {

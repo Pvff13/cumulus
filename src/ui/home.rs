@@ -139,7 +139,7 @@ fn parse(body: &str) -> Result<Vec<Selection>, ApiError> {
 }
 
 impl App {
-    fn load_home(&mut self) {
+    pub(super) fn load_home(&mut self) {
         let key = format!("home-{}", self.me);
         let show_saved = self.home.sections.is_empty();
         self.home.started = true;

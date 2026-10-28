@@ -115,6 +115,12 @@ and every track credits its artist and links back to SoundCloud.
   as a separate process, so its memory is fully released afterwards.
 - The token is stored in **Windows Credential Manager** (entry `Cumulus`).
   Nothing secret is written to disk by Cumulus itself.
+- **When the login expires**, Cumulus first checks it really has (one
+  refused request doesn't sign you out), then quietly opens soundcloud.com in
+  a hidden copy of the sign-in window. If SoundCloud still remembers that
+  browser, it hands out a new login and you carry on without noticing. Only
+  if that fails do you see the sign-in screen, and even then SoundCloud may
+  remember you. **Sign out** forgets the sign-in window's browser too.
 - **Paste a token instead** is a fallback: paste the value of the
   `oauth_token` cookie from soundcloud.com (browser dev tools → Application →
   Cookies).
