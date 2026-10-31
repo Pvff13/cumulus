@@ -331,6 +331,34 @@ WAV, AIFF, OGG Vorbis and ALAC.
   keeps playing. Use *Quit* in the tray menu to exit. Untick *Close to tray,
   keep playing* (bottom of the sidebar) to make ✕ quit instead.
 
+## Listen along
+
+Friends can hear what you're playing, in step with you, like Spotify's
+"Listen Along" on Discord. They need Cumulus too, signed in to their own
+SoundCloud account.
+
+- **Host:** click **👥** in the player bar → **Start a listening session**,
+  and send a friend the code (**Copy**). The 👥 shows how many people are
+  listening. **End session** stops it for everyone.
+- **Join:** 👥 → paste the code → **Join**. Your Cumulus then plays what the
+  host plays and keeps in step with their skips, pauses and seeks (within
+  about a second). **Leave** in the bar at the top stops following.
+- **From Discord:** with **Show on Discord** on, a host's status carries the
+  session so friends can **Ask to Join** from their profile, and the host
+  gets *Accept / Decline* in Cumulus. The friend's Cumulus must be open with
+  Show on Discord on too. (Discord doesn't allow a status to be joinable and
+  have the "Listen on SoundCloud" button at once, so the button is hidden
+  while you host.)
+- **How it works:** a small relay (`server/listen-along`, a Cloudflare
+  Worker) passes on the host's track id, position and play/pause. No audio
+  goes through it: everyone streams from SoundCloud themselves. It keeps
+  only the latest state of a live session and forgets the session when it
+  ends (or after 12 hours). Your own files can't be shared; listeners see
+  "nothing playing" while you play one. DRM-only tracks skip for listeners,
+  as they do everywhere in Cumulus.
+- To use your own relay, deploy `server/listen-along` (see its README) and
+  put its address in `config.json` as `"listen_server": "wss://…"`.
+
 ## Caching
 
 All under `%LOCALAPPDATA%\Cumulus\cache`, safe to delete at any time:
@@ -446,6 +474,8 @@ and prints the public key for `RELEASE_KEY` in `src/signing.rs`.
 | `souvlaki` | Windows media overlay / media keys (also MPRIS and macOS Now Playing). |
 | `tray-icon` | Tray icon and its menu (Windows). |
 | `ksni` | Tray icon on Linux (StatusNotifierItem, so clicks reach the app). |
+| `tungstenite` (native-tls) | The listen-along connection (a WebSocket to the relay). |
+| `windows-sys` | Checking Discord's pipe for join events without blocking (Windows). |
 | `embed-resource` (build only) | Compiles the icon into the .exe with the Windows SDK's `rc.exe`. Not part of the app at runtime. |
 | `ed25519-dalek`, `sha2` | Checking update signatures (and, in debug builds only, signing releases). |
 | `getrandom` | Creating the signing key (debug-only tool). |

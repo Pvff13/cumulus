@@ -544,6 +544,7 @@ impl App {
                 {
                     self.set_mini(true);
                 }
+                self.along_button(ui);
                 self.sleep_button(ui);
                 self.eq_button(ui);
                 self.speed_button(ui);

@@ -1,0 +1,14 @@
+{
+  "name": "cumulus-listen",
+  "private": true,
+  "description": "Listen-along relay for Cumulus (Cloudflare Worker + Durable Objects)",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "test": "node test/relay.test.mjs"
+  },
+  "devDependencies": {
+    "wrangler": "^4.40.0"
+  }
+}

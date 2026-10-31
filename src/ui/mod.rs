@@ -8,6 +8,7 @@ mod home;
 mod hotkeys;
 mod icon;
 mod library;
+mod listen_along;
 mod local_page;
 mod looks;
 mod overlay_ui;
@@ -64,6 +65,12 @@ enum Msg {
     LoginWindowClosed(Result<bool, String>),
     /// Result of trying to recover from a refused login.
     LoginRenewal(Renewal),
+    /// Listen along: from the session's background thread.
+    Along(crate::listen::Event),
+    /// Listen along: the track the host is playing, looked up.
+    AlongTrack(Result<Track, ApiError>),
+    /// From Discord: you clicked Join, or someone asked to join.
+    Discord(crate::discord::Incoming),
     /// The in-app soundcloud.com window closed (or failed to open).
     SoundCloudPageClosed(rows::TrackAction, Option<String>),
     Feed { kind: FeedKind, generation: u32, first: bool, cached: bool, result: Result<RowPage, ApiError> },
@@ -313,6 +320,10 @@ pub struct App {
     was_focused: bool,
     /// A refused login is being checked / renewed in the background.
     renewing: bool,
+    /// Listen along: hosting, following, or neither.
+    along: listen_along::Along,
+    /// Listen along: the code typed into "Join".
+    along_code: String,
     /// When the login was last renewed (or failed to), so a token that keeps
     /// being refused leads to the sign-in screen rather than a loop.
     last_renewal: Option<Instant>,
@@ -428,8 +439,12 @@ pub struct App {
     /// it's on, the background connection, and what was last sent.
     discord_app_id: Option<String>,
     discord_on: bool,
-    discord: Option<std::sync::mpsc::Sender<Option<crate::discord::Activity>>>,
-    discord_sent: Option<(u64, u64)>,
+    discord: Option<std::sync::mpsc::Sender<crate::discord::Request>>,
+    /// What Discord was last sent: track length, start time, and the
+    /// listen-along session (code, people) if any.
+    discord_sent: Option<(u64, u64, Option<(String, usize)>)>,
+    /// Listen along: people asking to join on Discord (user id, name).
+    join_requests: Vec<(String, String)>,
     /// Equalizer (preamp + 5 bands, dB) and playback speed.
     eq_on: bool,
     eq_gains: [f32; 6],
@@ -535,6 +550,8 @@ impl App {
             was_focused: true,
             renewing: false,
             last_renewal: None,
+            along: listen_along::Along::Off,
+            along_code: String::new(),
             search_text: String::new(),
             search_query: String::new(),
             search_kind: SearchKind::Tracks,
@@ -615,6 +632,7 @@ impl App {
             discord_on: config.discord_status || (cfg!(debug_assertions) && std::env::var_os("CUMULUS_DEV_DISCORD").is_some()),
             discord: None,
             discord_sent: None,
+            join_requests: Vec::new(),
             eq_on: config.eq_on,
             eq_gains: config.eq_gains,
             speed: config.speed,
@@ -962,6 +980,9 @@ impl App {
             Msg::Session(Ok(None)) => self.screen = Screen::SignedOut { error: None },
             Msg::Session(Err(ApiError::Unauthorized)) => self.login_refused(),
             Msg::LoginRenewal(result) => self.login_renewal(result),
+            Msg::Along(e) => self.along_event(e),
+            Msg::Discord(e) => self.discord_event(e),
+            Msg::AlongTrack(result) => self.along_track(result),
             Msg::SoundCloudPageClosed(action, None) => {
                 self.recheck_on_focus = None;
                 self.recheck_library(action);
@@ -1424,12 +1445,21 @@ impl App {
     fn update_discord(&mut self) {
         let Some(app_id) = self.discord_app_id.clone().filter(|_| self.discord_on) else {
             if let Some(tx) = self.discord.take() {
-                let _ = tx.send(None);
+                let _ = tx.send(crate::discord::Request::Activity(None));
             }
             self.discord_sent = None;
             return;
         };
-        let tx = self.discord.get_or_insert_with(|| crate::discord::start(app_id)).clone();
+        let (msgs, ctx) = (self.tx.clone(), self.ctx.clone());
+        let tx = self
+            .discord
+            .get_or_insert_with(|| {
+                crate::discord::start(app_id, move |e| {
+                    let _ = msgs.send(Msg::Discord(e));
+                    ctx.request_repaint();
+                })
+            })
+            .clone();
         let now = self.player.now().filter(|_| !self.player.is_paused());
         let track = self.queue.current().and_then(|i| i.track.clone());
         let want = match (now, track) {
@@ -1444,15 +1474,25 @@ impl App {
             )),
             _ => None,
         };
-        let key = want.as_ref().map(|a| (a.end_ms - a.start_ms, a.start_ms));
-        // Same track and start time (within 2 s): nothing to update.
-        let same = match (self.discord_sent, key) {
+        // Hosting a listen-along session: friends can join from Discord.
+        let want = want.map(|mut a| {
+            a.join = self.along.room().map(|room| crate::discord::Join {
+                secret: room.to_string(),
+                party: listen_along::party_id(room),
+                size: self.along.listeners() + 1,
+                max: listen_along::MAX_PEOPLE,
+            });
+            a
+        });
+        let key = want.as_ref().map(|a| (a.end_ms - a.start_ms, a.start_ms, a.join.as_ref().map(|j| (j.secret.clone(), j.size))));
+        // Same track, start time (within 2 s) and session: nothing to update.
+        let same = match (&self.discord_sent, &key) {
             (None, None) => true,
-            (Some((d1, s1)), Some((d2, s2))) => d1 == d2 && s1.abs_diff(s2) < 2000,
+            (Some((d1, s1, j1)), Some((d2, s2, j2))) => d1 == d2 && s1.abs_diff(*s2) < 2000 && j1 == j2,
             _ => false,
         };
         if !same {
-            let _ = tx.send(want);
+            let _ = tx.send(crate::discord::Request::Activity(want));
             self.discord_sent = key;
         }
     }
@@ -1890,6 +1930,8 @@ impl App {
             .show(ui, |ui| {
                 self.paint_wallpaper(ui);
                 self.search_bar(ui);
+                self.join_requests_ui(ui);
+                self.along_banner(ui);
                 self.status_banner(ui);
                 self.content_ui(ui);
             });
@@ -1928,6 +1970,7 @@ impl eframe::App for App {
         self.track_listening();
         self.skip_if_stuck(ctx);
         self.sleep_tick(ctx);
+        self.along_tick();
         self.update_discord();
         self.save_session(false);
         self.check_for_update();

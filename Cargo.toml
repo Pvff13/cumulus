@@ -44,6 +44,7 @@ getrandom = "0.3"
 # egui's own monochrome emoji fonts (🔀 🔁 🎨 ...): Linux has no plain emoji
 # font to fall back on, and they keep icons looking the same everywhere.
 egui = { version = "0.37.0", default-features = false, features = ["monochrome_emoji_fonts"] }
+tungstenite = { version = "0.30.0", default-features = false, features = ["native-tls", "handshake"] }
 
 [target.'cfg(not(target_os = "linux"))'.dependencies]
 # Windows tray icon (Linux uses ksni below, which reports clicks).
@@ -52,6 +53,8 @@ tray-icon = "0.26.1"
 [target.'cfg(windows)'.dependencies]
 # Native Windows file pickers (Linux uses GTK's, see dialogs.rs).
 rfd = "0.15"
+# Checking Discord's pipe for incoming events without blocking.
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Pipes"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 eframe = { version = "0.37.0", default-features = false, features = ["glow", "default_fonts", "links", "clipboard", "x11", "wayland"] }

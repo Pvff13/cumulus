@@ -1,0 +1,13 @@
+name = "cumulus-listen"
+main = "src/index.js"
+compatibility_date = "2025-09-01"
+
+# One Durable Object per listening session. SQLite-backed, which is what
+# Cloudflare's free plan supports.
+[[durable_objects.bindings]]
+name = "ROOMS"
+class_name = "Room"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Room"]
