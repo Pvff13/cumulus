@@ -594,16 +594,14 @@ impl App {
                         let rules = &mut self.along_rules;
                         ui.checkbox(&mut rules.open, "Let listeners add songs");
                         if rules.open {
+                            // Buttons, not a dropdown: a dropdown's own pop-up
+                            // counts as a click outside and closes this menu.
+                            ui.label("Songs each person can have waiting:");
                             ui.horizontal(|ui| {
-                                ui.label("Each person can have");
-                                let shown = rules.limit.map_or("any number of".to_string(), |n| n.to_string());
-                                egui::ComboBox::from_id_salt("along-limit").selected_text(shown).show_ui(ui, |ui| {
-                                    for n in [1, 2, 3, 5, 10] {
-                                        ui.selectable_value(&mut rules.limit, Some(n), n.to_string());
-                                    }
-                                    ui.selectable_value(&mut rules.limit, None, "any number of");
-                                });
-                                ui.label("songs waiting");
+                                for n in [1, 2, 3, 5, 10] {
+                                    ui.selectable_value(&mut rules.limit, Some(n), n.to_string());
+                                }
+                                ui.selectable_value(&mut rules.limit, None, "Any");
                             });
                             ui.checkbox(&mut rules.auto, "Add them automatically")
                                 .on_hover_text("Off: you'll see each request at the top of Cumulus and can add or ignore it.");
