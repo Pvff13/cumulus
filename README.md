@@ -344,8 +344,10 @@ SoundCloud account.
   host plays and keeps in step with their skips, pauses and seeks (within
   about a second). **Leave** in the bar at the top stops following.
 - **From Discord:** with **Show on Discord** on, a host's status carries the
-  session so friends can **Ask to Join** from their profile, and the host
-  gets *Accept / Decline* in Cumulus. The friend's Cumulus must be open with
+  session (it reads "Playing Cumulus" while you host, since Discord only
+  offers joining on Playing statuses), so friends can **Ask to Join** from
+  your profile, and you get *Accept / Decline* in Cumulus. You can also
+  invite someone from the **+** next to Discord's message box. The friend's Cumulus must be open with
   Show on Discord on too. (Discord doesn't allow a status to be joinable and
   have the "Listen on SoundCloud" button at once, so the button is hidden
   while you host.)

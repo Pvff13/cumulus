@@ -58,8 +58,12 @@ impl Activity {
             let s: String = s.chars().take(120).collect();
             if s.chars().count() < 2 { format!("{s}  ") } else { s }
         };
+        // Discord only offers Join on "Playing" statuses, so a joinable
+        // status (hosting listen along) is "Playing Cumulus"; otherwise
+        // it's "Listening to".
+        let kind = if self.join.is_some() { 0 } else { 2 };
         let mut activity = json!({
-            "type": 2, // "Listening to"
+            "type": kind,
             "details": field(&self.title),
             "state": field(&format!("by {}", self.artist)),
             "timestamps": { "start": self.start_ms, "end": self.end_ms },
@@ -436,6 +440,7 @@ mod tests {
         a.join = Some(Join { secret: "s".repeat(32), party: "p1".into(), size: 2, max: 21 });
         let j = a.to_json();
         assert!(j.get("buttons").is_none());
+        assert_eq!(j["type"], 0); // "Playing": the only kind Discord offers Join on
         assert_eq!(j["secrets"]["join"], "s".repeat(32));
         assert_eq!(j["party"]["size"], json!([2, 21]));
     }
