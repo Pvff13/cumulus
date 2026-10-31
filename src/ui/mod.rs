@@ -69,6 +69,8 @@ enum Msg {
     Along(crate::listen::Event),
     /// Listen along: the track the host is playing, looked up.
     AlongTrack(Result<Track, ApiError>),
+    /// Listen along, hosting: a requested song, looked up.
+    AlongRequest { from: String, name: String, result: Result<Track, ApiError> },
     /// From Discord: you clicked Join, or someone asked to join.
     Discord(crate::discord::Incoming),
     /// The in-app soundcloud.com window closed (or failed to open).
@@ -324,6 +326,8 @@ pub struct App {
     along: listen_along::Along,
     /// Listen along: the code typed into "Join".
     along_code: String,
+    /// Listen along, hosting: the song-request settings.
+    along_rules: listen_along::Rules,
     /// When the login was last renewed (or failed to), so a token that keeps
     /// being refused leads to the sign-in screen rather than a loop.
     last_renewal: Option<Instant>,
@@ -552,6 +556,7 @@ impl App {
             last_renewal: None,
             along: listen_along::Along::Off,
             along_code: String::new(),
+            along_rules: listen_along::Rules::load(&config),
             search_text: String::new(),
             search_query: String::new(),
             search_kind: SearchKind::Tracks,
@@ -725,11 +730,17 @@ impl App {
     }
 
     fn info(&mut self, text: impl Into<String>) {
-        self.status = Some(Status { text: text.into(), at: Instant::now(), error: false });
+        let text = text.into();
+        #[cfg(debug_assertions)]
+        eprintln!("status: {text}");
+        self.status = Some(Status { text, at: Instant::now(), error: false });
     }
 
     fn error(&mut self, text: impl Into<String>) {
-        self.status = Some(Status { text: text.into(), at: Instant::now(), error: true });
+        let text = text.into();
+        #[cfg(debug_assertions)]
+        eprintln!("status (error): {text}");
+        self.status = Some(Status { text, at: Instant::now(), error: true });
     }
 
     /// Load the saved token (if any) and confirm it with /me.
@@ -983,6 +994,7 @@ impl App {
             Msg::Along(e) => self.along_event(e),
             Msg::Discord(e) => self.discord_event(e),
             Msg::AlongTrack(result) => self.along_track(result),
+            Msg::AlongRequest { from, name, result } => self.along_request(from, name, result),
             Msg::SoundCloudPageClosed(action, None) => {
                 self.recheck_on_focus = None;
                 self.recheck_library(action);
@@ -1295,7 +1307,9 @@ impl App {
     /// after it. The engine opens the next track ~30 s before the end, so this
     /// continues without a gap.
     fn autoplay_if_needed(&mut self) {
-        if !self.autoplay || self.queue.repeat != queue::Repeat::Off || self.queue.peek_next().is_some() {
+        // Listening along: the host decides what plays next.
+        let following = matches!(self.along, listen_along::Along::Following { .. });
+        if !self.autoplay || following || self.queue.repeat != queue::Repeat::Off || self.queue.peek_next().is_some() {
             return;
         }
         let Some(current) = self.queue.current_id() else { return };
@@ -1931,6 +1945,7 @@ impl App {
                 self.paint_wallpaper(ui);
                 self.search_bar(ui);
                 self.join_requests_ui(ui);
+                self.song_requests_ui(ui);
                 self.along_banner(ui);
                 self.status_banner(ui);
                 self.content_ui(ui);

@@ -139,7 +139,13 @@ pub enum TrackAction {
     AddToLocal(Option<usize>),
     /// Remove from the local playlist being shown.
     RemoveFromLocal,
+    /// Listen along: ask the host to queue it.
+    AddToSession,
 }
+
+/// Listen along: the host you're following takes song requests (shows
+/// "Add to session queue" in track menus).
+pub static SESSION_REQUESTS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// A track row: ▶ on the artwork (or double-click) plays, the heart opens
 /// the track on SoundCloud to like it there,
@@ -270,6 +276,9 @@ pub fn track_menu(ui: &mut egui::Ui, track: &Track, liked: bool, in_local_list: 
     item(ui, "▶  Play", TrackAction::Play);
     item(ui, "Play next", TrackAction::PlayNext);
     item(ui, "Add to queue", TrackAction::AddToQueue);
+    if track.local_path.is_none() && SESSION_REQUESTS.load(std::sync::atomic::Ordering::Relaxed) {
+        item(ui, "👥  Add to session queue", TrackAction::AddToSession);
+    }
     ui.separator();
     let like = if liked { "♥  Unlike…" } else { "♡  Like…" };
     item(ui, like, TrackAction::LikeOnSoundCloud);

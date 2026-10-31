@@ -2,7 +2,8 @@
 //! talk through a small relay (server/listen-along, a Cloudflare Worker):
 //! the host sends the track id, its position and whether it's playing, and
 //! the relay passes that on. No audio goes through the relay; each person
-//! streams from SoundCloud themselves.
+//! streams from SoundCloud themselves. If the host allows it, listeners can
+//! also ask for songs to be queued; the host's Cumulus answers each request.
 
 use std::io::ErrorKind;
 use std::net::TcpStream;
@@ -22,6 +23,52 @@ pub struct State {
     /// Seconds into the track when this was sent.
     pub position: f64,
     pub playing: bool,
+    /// Listeners may ask for songs.
+    pub requests: bool,
+}
+
+/// How the host answered a song request.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Answer {
+    Added,
+    /// Waiting for the host to approve it.
+    Waiting,
+    Declined,
+    /// That person already has as many songs waiting as the host allows.
+    Limit,
+    /// The host doesn't take requests (now).
+    Closed,
+    /// It can't play (DRM, or not found).
+    Unavailable,
+}
+
+impl Answer {
+    fn key(self) -> &'static str {
+        match self {
+            Answer::Added => "added",
+            Answer::Waiting => "waiting",
+            Answer::Declined => "declined",
+            Answer::Limit => "limit",
+            Answer::Closed => "closed",
+            Answer::Unavailable => "unavailable",
+        }
+    }
+
+    fn from_key(s: &str) -> Option<Self> {
+        [Answer::Added, Answer::Waiting, Answer::Declined, Answer::Limit, Answer::Closed, Answer::Unavailable]
+            .into_iter()
+            .find(|a| a.key() == s)
+    }
+}
+
+/// From the UI to a session's thread.
+enum Out {
+    State(State),
+    /// Listener: ask the host to queue a song.
+    Request { track: u64, name: String },
+    /// Host: answer someone's request.
+    Reply { to: String, track: u64, answer: Answer },
+    Stop,
 }
 
 /// What a session's background thread reports.
@@ -33,6 +80,10 @@ pub enum Event {
     Listeners(usize),
     /// Listener: what the host is playing now (received at that instant).
     State(State, Instant),
+    /// Host: a listener (`from`, a short id from the relay) asks for a song.
+    Request { from: String, track: u64, name: String },
+    /// Listener: the host's answer to your request.
+    Reply { track: u64, answer: Answer },
     /// The session is over (the host ended it, or it timed out).
     Ended,
     /// Couldn't connect, or gave up reconnecting.
@@ -63,7 +114,7 @@ fn room_url(server: &str, room: &str, query: &str) -> String {
 
 /// Hosting a session. Send states with `send`; dropping it ends the session.
 pub struct Host {
-    tx: Sender<Option<State>>,
+    tx: Sender<Out>,
 }
 
 impl Host {
@@ -78,20 +129,24 @@ impl Host {
     }
 
     pub fn send(&self, state: State) {
-        let _ = self.tx.send(Some(state));
+        let _ = self.tx.send(Out::State(state));
+    }
+
+    pub fn answer(&self, to: &str, track: u64, answer: Answer) {
+        let _ = self.tx.send(Out::Reply { to: to.to_string(), track, answer });
     }
 }
 
 impl Drop for Host {
     fn drop(&mut self) {
         // Tells the thread to end the session for everyone.
-        let _ = self.tx.send(None);
+        let _ = self.tx.send(Out::Stop);
     }
 }
 
 /// Following someone's session. Dropping it leaves.
 pub struct Listener {
-    _stop: Sender<Option<State>>,
+    tx: Sender<Out>,
 }
 
 impl Listener {
@@ -102,7 +157,12 @@ impl Listener {
             .name("listen-follow".into())
             .spawn(move || run(&url, Some(rx), &events))
             .expect("spawn listen thread");
-        Self { _stop: tx }
+        Self { tx }
+    }
+
+    /// Asks the host to queue a song; `name` is shown to the host.
+    pub fn request(&self, track: u64, name: &str) {
+        let _ = self.tx.send(Out::Request { track, name: name.to_string() });
     }
 }
 
@@ -119,9 +179,8 @@ enum Exit {
 }
 
 /// Connects, and reconnects for a while if the connection drops. `rx`
-/// carries states to send (host) or nothing (listener); it closing, or a
-/// `None`, means stop.
-fn run(url: &str, rx: Option<Receiver<Option<State>>>, events: &dyn Fn(Event)) {
+/// carries what to send; it closing, or `Out::Stop`, means stop.
+fn run(url: &str, rx: Option<Receiver<Out>>, events: &dyn Fn(Event)) {
     let rx = rx.expect("control channel");
     let is_host = url.contains("role=host");
     let mut last: Option<State> = None;
@@ -167,8 +226,10 @@ fn run(url: &str, rx: Option<Receiver<Option<State>>>, events: &dyn Fn(Event)) {
         let until = Instant::now() + wait;
         while Instant::now() < until {
             match rx.recv_timeout(Duration::from_millis(200)) {
-                Ok(Some(s)) => last = Some(s),
-                Ok(None) | Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return,
+                Ok(Out::State(s)) => last = Some(s),
+                // Requests and answers made while disconnected are dropped.
+                Ok(Out::Request { .. } | Out::Reply { .. }) => {}
+                Ok(Out::Stop) | Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return,
                 Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
             }
         }
@@ -208,26 +269,40 @@ fn connect(url: &str) -> Result<Socket, Refused> {
 }
 
 fn send_state(ws: &mut Socket, s: State) -> tungstenite::Result<()> {
-    let m = json!({ "type": "state", "track": s.track, "position": (s.position * 10.0).round() / 10.0, "playing": s.playing });
+    let m = json!({
+        "type": "state",
+        "track": s.track,
+        "position": (s.position * 10.0).round() / 10.0,
+        "playing": s.playing,
+        "requests": s.requests,
+    });
     ws.send(Message::text(m.to_string()))
 }
 
 fn session(
     ws: &mut Socket,
-    rx: &Receiver<Option<State>>,
+    rx: &Receiver<Out>,
     last: &mut Option<State>,
     is_host: bool,
     events: &dyn Fn(Event),
 ) -> Exit {
     let mut pinged = Instant::now();
     loop {
-        // Outgoing: the newest state only.
+        // Outgoing: the newest state only, and every request / answer.
         let mut newest = None;
         loop {
-            match rx.try_recv() {
-                Ok(Some(s)) => newest = Some(s),
-                Ok(None) | Err(TryRecvError::Disconnected) => return Exit::Done,
+            let message = match rx.try_recv() {
+                Ok(Out::State(s)) => {
+                    newest = Some(s);
+                    continue;
+                }
+                Ok(Out::Request { track, name }) => json!({ "type": "request", "track": track, "name": name }),
+                Ok(Out::Reply { to, track, answer }) => json!({ "type": "reply", "to": to, "track": track, "status": answer.key() }),
+                Ok(Out::Stop) | Err(TryRecvError::Disconnected) => return Exit::Done,
                 Err(TryRecvError::Empty) => break,
+            };
+            if let Err(e) = ws.send(Message::text(message.to_string())) {
+                return Exit::Lost(e.to_string());
             }
         }
         if let Some(s) = newest {
@@ -254,9 +329,25 @@ fn session(
                         let playing = m["playing"].as_bool().unwrap_or(false);
                         // A late joiner's first state can be a few seconds old.
                         let age = if playing { m["age"].as_f64().unwrap_or(0.0).clamp(0.0, 60_000.0) / 1000.0 } else { 0.0 };
-                        let s = State { track: m["track"].as_u64(), position: m["position"].as_f64().unwrap_or(0.0) + age, playing };
+                        let s = State {
+                            track: m["track"].as_u64(),
+                            position: m["position"].as_f64().unwrap_or(0.0) + age,
+                            playing,
+                            requests: m["requests"].as_bool().unwrap_or(false),
+                        };
                         *last = Some(s);
                         events(Event::State(s, Instant::now()));
+                    }
+                    Some("request") if is_host => {
+                        if let (Some(from), Some(track)) = (m["from"].as_str(), m["track"].as_u64()) {
+                            let name = m["name"].as_str().unwrap_or("A listener").to_string();
+                            events(Event::Request { from: from.to_string(), track, name });
+                        }
+                    }
+                    Some("reply") if !is_host => {
+                        if let (Some(track), Some(answer)) = (m["track"].as_u64(), m["status"].as_str().and_then(Answer::from_key)) {
+                            events(Event::Reply { track, answer });
+                        }
                     }
                     _ => {}
                 }

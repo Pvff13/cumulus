@@ -9,8 +9,13 @@ through it.
   connect owns the room (only a hash of its key is kept).
 - `wss://<worker>/v1/rooms/<room>?role=listen`: follow it. Late joiners get
   the latest state, with its age in ms.
+- Song requests: when the host's state says `requests: true`, a listener's
+  `{type: "request", track, name}` goes to the host with a short random id
+  for that listener (`from`); the host's `{type: "reply", to, track, status}`
+  goes back to that listener only.
 - Limits: 20 listeners per room, 1 KB per message, 30 host messages per
-  10 s. Only `track`, `position` and `playing` are passed on.
+  10 s, 10 song requests per listener per minute. Only `track`, `position`,
+  `playing` and `requests` are passed on from the host's state.
 - Nothing is kept after a session: the host ending it (or not coming back
   within a minute of dropping, or 12 hours passing) deletes the room.
 

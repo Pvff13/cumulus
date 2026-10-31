@@ -430,6 +430,7 @@ impl App {
                 | TrackAction::OpenArtist
                 | TrackAction::NotInterested
                 | TrackAction::BlockArtist
+                | TrackAction::AddToSession
         );
         if track.local_path.is_some() && soundcloud_only {
             self.info("That's a file on your PC, so it has no SoundCloud page.");
@@ -438,6 +439,7 @@ impl App {
         match action {
             TrackAction::AddToLocal(i) => self.add_to_local_playlist(i, &track),
             TrackAction::RemoveFromLocal => self.remove_from_local_playlist(&track),
+            TrackAction::AddToSession => self.request_song(&track),
             TrackAction::Play => self.play_list(vec![QueueItem { id: track.id, track: Some(track) }], 0),
             TrackAction::LikeOnSoundCloud | TrackAction::AddToPlaylistOnSoundCloud => {
                 // SoundCloud puts likes and playlist edits behind a browser

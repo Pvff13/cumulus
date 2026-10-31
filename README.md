@@ -343,6 +343,13 @@ SoundCloud account.
 - **Join:** 👥 → paste the code → **Join**. Your Cumulus then plays what the
   host plays and keeps in step with their skips, pauses and seeks (within
   about a second). **Leave** in the bar at the top stops following.
+- **Song requests:** while hosting, 👥 → **Let listeners add songs** lets
+  them right-click any track → **Add to session queue**. Choose how many of
+  one person's songs can be waiting at once (1, 2, 3, 5, 10 or any), and
+  whether requests are added automatically or shown at the top of Cumulus
+  for you to **Add / Ignore**. Listeners are told whether their song was
+  added, and you see the SoundCloud name of whoever asked. The relay also
+  caps each listener at 10 requests a minute.
 - **From Discord:** with **Show on Discord** on, a host's status carries the
   session (it reads "Playing Cumulus" while you host, since Discord only
   offers joining on Playing statuses), so friends can **Ask to Join** from
@@ -352,7 +359,8 @@ SoundCloud account.
   have the "Listen on SoundCloud" button at once, so the button is hidden
   while you host.)
 - **How it works:** a small relay (`server/listen-along`, a Cloudflare
-  Worker) passes on the host's track id, position and play/pause. No audio
+  Worker) passes on the host's track id, position and play/pause (and song requests
+  and their answers). No audio
   goes through it: everyone streams from SoundCloud themselves. It keeps
   only the latest state of a live session and forgets the session when it
   ends (or after 12 hours). Your own files can't be shared; listeners see

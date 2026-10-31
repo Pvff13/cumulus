@@ -15,6 +15,11 @@ const HOST_BURST = 30;
 const HOST_GRACE_MS = 60_000;
 /** Rooms end after this long, whatever happens. */
 const MAX_ROOM_MS = 12 * 60 * 60_000;
+/** Song requests one listener may send per minute (the host sets its own,
+ * usually lower, limit on top). */
+const REQUESTS_PER_MINUTE = 10;
+/** What a host may answer a song request with. */
+const REPLIES = new Set(["added", "declined", "limit", "closed", "unavailable", "waiting"]);
 
 const HEX32 = /^[0-9a-f]{32}$/;
 
@@ -83,6 +88,9 @@ export class Room extends DurableObject {
     }
     const [client, server] = Object.values(new WebSocketPair());
     this.ctx.acceptWebSocket(server, ["listen"]);
+    // A short id so the host can tell listeners' song requests apart and
+    // answer the right one. Says nothing about who they are.
+    server.serializeAttachment({ id: crypto.randomUUID().slice(0, 8), window: 0, count: 0 });
     // A late joiner gets the last state, with how old it is (a playing
     // host has moved on since).
     const state = await this.ctx.storage.get("state");
@@ -113,12 +121,12 @@ export class Room extends DurableObject {
   }
 
   async webSocketMessage(ws, message) {
-    // Listeners only listen.
-    if (!this.ctx.getTags(ws).includes("host")) {
-      return;
-    }
     if (typeof message !== "string" || message.length > MAX_MESSAGE) {
       return;
+    }
+    // Listeners can only ask for songs.
+    if (!this.ctx.getTags(ws).includes("host")) {
+      return this.request(ws, message);
     }
     const rate = ws.deserializeAttachment() ?? { window: 0, count: 0 };
     const now = Date.now();
@@ -137,18 +145,77 @@ export class Room extends DurableObject {
     } catch {
       return;
     }
+    if (m?.type === "reply") {
+      return this.reply(m);
+    }
     if (m?.type !== "state") {
       return;
     }
     // Pass on only these fields, checked, whatever the host sent.
     const track = Number.isSafeInteger(m.track) && m.track > 0 ? m.track : null;
     const position = Number.isFinite(m.position) ? Math.max(0, Math.min(m.position, 86_400)) : 0;
-    const out = JSON.stringify({ type: "state", track, position, playing: m.playing === true });
-    await this.ctx.storage.put({ state: out, stateAt: Date.now() });
+    const requests = m.requests === true;
+    const out = JSON.stringify({ type: "state", track, position, playing: m.playing === true, requests });
+    await this.ctx.storage.put({ state: out, stateAt: Date.now(), requests });
     for (const listener of this.listeners()) {
       try {
         listener.send(out);
       } catch {}
+    }
+  }
+
+  /** A listener asks the host to queue a song (if the host allows it). */
+  async request(ws, message) {
+    const me = ws.deserializeAttachment() ?? {};
+    const now = Date.now();
+    if (now - (me.window ?? 0) > 60_000) {
+      me.window = now;
+      me.count = 0;
+    }
+    me.count = (me.count ?? 0) + 1;
+    ws.serializeAttachment(me);
+    let m;
+    try {
+      m = JSON.parse(message);
+    } catch {
+      return;
+    }
+    if (m?.type !== "request" || !Number.isSafeInteger(m.track) || m.track <= 0) {
+      return;
+    }
+    const answer = (status) => ws.send(JSON.stringify({ type: "reply", track: m.track, status }));
+    if (me.count > REQUESTS_PER_MINUTE) {
+      return answer("limit");
+    }
+    if (!(await this.ctx.storage.get("requests"))) {
+      return answer("closed");
+    }
+    // A display name, cleaned up: printable, at most 40 characters.
+    const name = typeof m.name === "string" ? m.name.replace(/[\p{C}]/gu, "").trim().slice(0, 40) : "";
+    const out = JSON.stringify({ type: "request", from: me.id, track: m.track, name: name || "A listener" });
+    const hosts = this.open("host");
+    if (hosts.length === 0) {
+      return answer("unavailable");
+    }
+    for (const host of hosts) {
+      try {
+        host.send(out);
+      } catch {}
+    }
+  }
+
+  /** The host's answer to a song request, passed to that listener only. */
+  reply(m) {
+    if (typeof m.to !== "string" || !REPLIES.has(m.status) || !Number.isSafeInteger(m.track)) {
+      return;
+    }
+    const out = JSON.stringify({ type: "reply", track: m.track, status: m.status });
+    for (const ws of this.listeners()) {
+      if (ws.deserializeAttachment()?.id === m.to) {
+        try {
+          ws.send(out);
+        } catch {}
+      }
     }
   }
 

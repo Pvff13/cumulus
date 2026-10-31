@@ -65,14 +65,14 @@ const tests = {
     assert.deepEqual(await next(host, 3000, "line 61"), { type: "listeners", count: 1 });
 
     host.send(JSON.stringify({ type: "state", track: 123, position: 61.5, playing: true, secret: "x" }));
-    assert.deepEqual(await next(a, 3000, "line 64"), { type: "state", track: 123, position: 61.5, playing: true });
+    assert.deepEqual(await next(a, 3000, "line 64"), { type: "state", track: 123, position: 61.5, playing: true, requests: false });
 
     await new Promise((r) => setTimeout(r, 300));
     const b = await connect(room, "listen");
     const late = await next(b);
     assert.ok(late.age >= 250 && late.age < 3000, `age ${late.age}`);
     delete late.age;
-    assert.deepEqual(late, { type: "state", track: 123, position: 61.5, playing: true });
+    assert.deepEqual(late, { type: "state", track: 123, position: 61.5, playing: true, requests: false });
     assert.deepEqual(await next(host, 3000, "line 68"), { type: "listeners", count: 2 });
 
     // Listeners can't send anything on.
@@ -86,7 +86,7 @@ const tests = {
 
     // Bad values are clamped.
     host.send(JSON.stringify({ type: "state", track: -4, position: 1e9, playing: "yes" }));
-    assert.deepEqual(await next(a, 3000, "line 81"), { type: "state", track: null, position: 86400, playing: false });
+    assert.deepEqual(await next(a, 3000, "line 81"), { type: "state", track: null, position: 86400, playing: false, requests: false });
     await next(b);
 
     a.close();
@@ -129,8 +129,59 @@ const tests = {
     const late = await connect(room, "listen");
     const m = await next(late);
     delete m.age;
-    assert.deepEqual(m, { type: "state", track: 7, position: 10, playing: true });
+    assert.deepEqual(m, { type: "state", track: 7, position: 10, playing: true, requests: false });
     back.close(1000);
+  },
+
+  async "song requests reach the host only when allowed, and replies reach the asker"() {
+    const room = hex();
+    const key = hex();
+    const host = await connect(room, "host", key);
+    await next(host);
+    const a = await connect(room, "listen");
+    await next(host);
+    const b = await connect(room, "listen");
+    await next(host);
+
+    // Closed until the host allows requests.
+    host.send(JSON.stringify({ type: "state", track: 1, position: 0, playing: true, requests: false }));
+    await next(a);
+    await next(b);
+    a.send(JSON.stringify({ type: "request", track: 55, name: "Al" }));
+    assert.deepEqual(await next(a), { type: "reply", track: 55, status: "closed" });
+    assert.ok(await quiet(host));
+
+    host.send(JSON.stringify({ type: "state", track: 1, position: 0, playing: true, requests: true }));
+    assert.equal((await next(a)).requests, true);
+    await next(b);
+    a.send(JSON.stringify({ type: "request", track: 55, name: "Al " + "x".repeat(60) }));
+    const req = await next(host);
+    assert.equal(req.type, "request");
+    assert.equal(req.track, 55);
+    assert.equal(req.name.length, 40);
+    assert.ok(!req.name.includes(""));
+    assert.match(req.from, /^[0-9a-f]{8}$/);
+
+    // The answer goes only to the listener who asked.
+    host.send(JSON.stringify({ type: "reply", to: req.from, track: 55, status: "added" }));
+    assert.deepEqual(await next(a), { type: "reply", track: 55, status: "added" });
+    assert.ok(await quiet(b));
+    // Made-up statuses are dropped.
+    host.send(JSON.stringify({ type: "reply", to: req.from, track: 55, status: "<script>" }));
+    assert.ok(await quiet(a));
+
+    // Bad requests are ignored.
+    b.send(JSON.stringify({ type: "request", track: -1 }));
+    b.send(JSON.stringify({ type: "state", track: 9, position: 0, playing: true }));
+    assert.ok(await quiet(host));
+
+    // At most 10 a minute per listener.
+    for (let i = 0; i < 12; i++) b.send(JSON.stringify({ type: "request", track: 100 + i, name: "B" }));
+    let forwarded = 0;
+    while (!(await quiet(host, 500))) forwarded++;
+    assert.equal(forwarded, 8); // its 2 earlier (ignored) messages count too
+    assert.deepEqual(await next(b), { type: "reply", track: 108, status: "limit" });
+    host.close(1000);
   },
 
   async "hosts can't flood the room"() {

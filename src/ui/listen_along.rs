@@ -1,8 +1,11 @@
 //! Listen along: host a session friends can join (with a code, or from your
-//! Discord status), or follow someone else's. See crate::listen for the
-//! network side.
+//! Discord status), or follow someone else's. A host can let listeners ask
+//! for songs, added straight away or after approval, with a limit per
+//! person. See crate::listen for the network side.
 
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
 use eframe::egui::{self, RichText};
@@ -11,7 +14,7 @@ use super::theme::{accent, muted};
 use super::{App, Msg};
 use crate::api::models::{Availability, Track};
 use crate::api::ApiError;
-use crate::listen::{self, Event, State};
+use crate::listen::{self, Answer, Event, State};
 use crate::player::QueueItem;
 
 /// The relay Cumulus uses unless config.json's `listen_server` says
@@ -35,6 +38,37 @@ const MAX_DRIFT_SECS: f64 = 2.5;
 /// relay's rooms can sleep in between, which keeps Cloudflare usage down.
 const HEARTBEAT: Duration = Duration::from_secs(30);
 
+/// Hosting: may listeners ask for songs, and how.
+#[derive(Clone, Copy, PartialEq)]
+pub(super) struct Rules {
+    pub open: bool,
+    /// Most of one person's songs waiting in the queue at once (None = any).
+    pub limit: Option<u32>,
+    /// Add requests straight away (otherwise the host approves each).
+    pub auto: bool,
+}
+
+impl Rules {
+    pub(super) fn load(c: &crate::config::Config) -> Self {
+        Self { open: c.listen_requests, limit: (c.listen_request_limit > 0).then_some(c.listen_request_limit), auto: c.listen_requests_auto }
+    }
+
+    fn save(self) {
+        let mut c = crate::config::Config::load();
+        c.listen_requests = self.open;
+        c.listen_request_limit = self.limit.unwrap_or(0);
+        c.listen_requests_auto = self.auto;
+        c.save();
+    }
+}
+
+/// A song request waiting for the host's approval.
+pub(super) struct Pending {
+    from: String,
+    name: String,
+    track: Arc<Track>,
+}
+
 pub(super) enum Along {
     Off,
     Hosting {
@@ -44,9 +78,17 @@ pub(super) enum Along {
         connected: bool,
         /// What was sent last, and when.
         sent: Option<(State, Instant)>,
+        /// Songs added at each listener's request (by their relay id).
+        added: HashMap<String, Vec<u64>>,
+        /// Requests being looked up, by listener.
+        looking_up: HashMap<String, usize>,
+        /// Requests waiting for approval.
+        pending: Vec<Pending>,
     },
     Following {
-        _listener: listen::Listener,
+        listener: listen::Listener,
+        /// Your requests waiting for an answer: track id -> title.
+        asked: HashMap<u64, String>,
         connected: bool,
         /// The host's latest state and when it arrived.
         target: Option<(State, Instant)>,
@@ -104,7 +146,16 @@ impl App {
         let Some(server) = server() else { return self.error("Listen along isn't set up: there's no server.") };
         let (room, key) = listen::new_room();
         let host = listen::Host::start(&server, &room, &key, self.along_sender());
-        self.along = Along::Hosting { host, room, listeners: 0, connected: false, sent: None };
+        self.along = Along::Hosting {
+            host,
+            room,
+            listeners: 0,
+            connected: false,
+            sent: None,
+            added: HashMap::new(),
+            looking_up: HashMap::new(),
+            pending: Vec::new(),
+        };
     }
 
     pub(super) fn join_session(&mut self, code: &str) {
@@ -116,7 +167,15 @@ impl App {
             return self.info("That's your own session.");
         }
         let listener = listen::Listener::join(&server, &room, self.along_sender());
-        self.along = Along::Following { _listener: listener, connected: false, target: None, loading: None, skip: None, checked: Instant::now() };
+        self.along = Along::Following {
+            listener,
+            asked: HashMap::new(),
+            connected: false,
+            target: None,
+            loading: None,
+            skip: None,
+            checked: Instant::now(),
+        };
         self.info("Joining the listening session…");
     }
 
@@ -148,6 +207,19 @@ impl App {
                 *target = Some((s, at));
                 self.follow();
             }
+            (Along::Hosting { .. }, Event::Request { from, track, name }) => self.song_requested(from, track, name),
+            (Along::Following { asked, .. }, Event::Reply { track, answer }) => {
+                let title = if answer == Answer::Waiting { asked.get(&track).cloned() } else { asked.remove(&track) };
+                let title = title.unwrap_or_else(|| "your song".to_string());
+                match answer {
+                    Answer::Added => self.info(format!("“{title}” was added to the session queue.")),
+                    Answer::Waiting => self.info(format!("Asked the host to add “{title}”.")),
+                    Answer::Declined => self.info(format!("The host didn't add “{title}”.")),
+                    Answer::Limit => self.error("You've already got as many songs waiting as the host allows."),
+                    Answer::Closed => self.error("The host isn't taking song requests."),
+                    Answer::Unavailable => self.error(format!("“{title}” can't be added (it can't play for the host).")),
+                }
+            }
             (Along::Off, _) => {}
             (Along::Following { .. }, Event::Ended) => {
                 self.along = Along::Off;
@@ -167,6 +239,8 @@ impl App {
     pub(super) fn along_tick(&mut self) {
         #[cfg(debug_assertions)]
         self.along_dev();
+        let requests = matches!(&self.along, Along::Following { target: Some((s, _)), .. } if s.requests);
+        super::rows::SESSION_REQUESTS.store(requests, Ordering::Relaxed);
         // Listener: re-check every second, so a track that took a moment
         // to start is brought in step straight away.
         if let Along::Following { checked, .. } = &mut self.along {
@@ -180,18 +254,21 @@ impl App {
         let now = self.player.now();
         let local = self.queue.current().and_then(|i| i.track.as_ref()).is_some_and(|t| t.local_path.is_some());
         let paused = self.player.is_paused();
+        let requests = self.along_rules.open;
         let Along::Hosting { host, sent, connected: true, .. } = &mut self.along else { return };
         // Your own files can't be shared: listeners see "nothing playing".
         let state = State {
             track: now.map(|n| n.0).filter(|_| !local),
             position: now.map_or(0.0, |n| n.1),
             playing: now.is_some() && !paused && !local,
+            requests,
         };
         let changed = match *sent {
             None => true,
             Some((s, at)) => {
                 s.track != state.track
                     || s.playing != state.playing
+                    || s.requests != state.requests
                     || (position_now(s, at) - state.position).abs() > MAX_DRIFT_SECS
                     || at.elapsed() > HEARTBEAT
             }
@@ -218,6 +295,29 @@ impl App {
                     self.seek_to(to);
                     if parts.get(2) == Some(&"pause") {
                         self.player.pause();
+                    }
+                }
+            }
+        }
+        // CUMULUS_DEV_ALONG_REQUEST=<id>[,<id>...]: once the host takes
+        // requests, ask for these songs (one a second).
+        if let (Along::Following { target: Some((s, _)), .. }, Ok(ids)) = (&self.along, std::env::var("CUMULUS_DEV_ALONG_REQUEST")) {
+            if s.requests && self.status.as_ref().is_none_or(|st| st.at.elapsed() > Duration::from_secs(1)) {
+                let mut ids: Vec<&str> = ids.split(',').collect();
+                if let Some(id) = ids.first().and_then(|i| i.parse::<u64>().ok()) {
+                    let rest = ids.split_off(1).join(",");
+                    // SAFETY: only read back on this (UI) thread.
+                    unsafe {
+                        if rest.is_empty() {
+                            std::env::remove_var("CUMULUS_DEV_ALONG_REQUEST");
+                        } else {
+                            std::env::set_var("CUMULUS_DEV_ALONG_REQUEST", rest);
+                        }
+                    }
+                    let api = self.api.clone();
+                    if let Ok(t) = api.track(id) {
+                        self.request_song(&t);
+                        self.info(format!("dev: requested {id}"));
                     }
                 }
             }
@@ -296,6 +396,100 @@ impl App {
         }
     }
 
+    /// Listener: ask the host to queue a song.
+    pub(super) fn request_song(&mut self, track: &Track) {
+        let name = match &self.screen {
+            super::Screen::SignedIn(user) => user.username.clone(),
+            _ => String::new(),
+        };
+        let Along::Following { listener, asked, target, .. } = &mut self.along else {
+            return self.error("You're not listening along with anyone.");
+        };
+        if !target.is_some_and(|(s, _)| s.requests) {
+            return self.error("The host isn't taking song requests.");
+        }
+        asked.insert(track.id, track.title.clone());
+        listener.request(track.id, &name);
+    }
+
+    /// The tracks still to come in the queue.
+    fn upcoming(&self) -> HashSet<u64> {
+        (self.queue.position() + 1..self.queue.len()).filter_map(|p| self.queue.at(p)).map(|i| i.id).collect()
+    }
+
+    /// Host: someone asked for a song. Checks the rules, then looks it up.
+    fn song_requested(&mut self, from: String, track: u64, name: String) {
+        let rules = self.along_rules;
+        let upcoming = self.upcoming();
+        let Along::Hosting { host, added, looking_up, pending, .. } = &mut self.along else { return };
+        if !rules.open {
+            return host.answer(&from, track, Answer::Closed);
+        }
+        let waiting = added.get(&from).map_or(0, |ids| ids.iter().filter(|id| upcoming.contains(id)).count())
+            + pending.iter().filter(|p| p.from == from).count()
+            + looking_up.get(&from).copied().unwrap_or(0);
+        if rules.limit.is_some_and(|n| waiting >= n as usize) {
+            return host.answer(&from, track, Answer::Limit);
+        }
+        *looking_up.entry(from.clone()).or_default() += 1;
+        self.spawn(move |api, send| send(Msg::AlongRequest { from, name, result: api.track(track) }));
+    }
+
+    /// Host: a requested song, looked up: add it, or wait for approval.
+    pub(super) fn along_request(&mut self, from: String, name: String, result: Result<Track, ApiError>) {
+        let auto = self.along_rules.auto;
+        let Along::Hosting { host, looking_up, pending, .. } = &mut self.along else { return };
+        if let Some(n) = looking_up.get_mut(&from) {
+            *n = n.saturating_sub(1);
+        }
+        let track = match result {
+            Ok(t) if t.availability() != Availability::Drm => Arc::new(t),
+            Ok(t) => return host.answer(&from, t.id, Answer::Unavailable),
+            Err(_) => return,
+        };
+        if auto {
+            self.add_requested(from, &name, track);
+        } else {
+            host.answer(&from, track.id, Answer::Waiting);
+            pending.push(Pending { from, name, track });
+        }
+    }
+
+    fn add_requested(&mut self, from: String, name: &str, track: Arc<Track>) {
+        let (id, title) = (track.id, track.title.clone());
+        self.track_action(super::rows::TrackAction::AddToQueue, track);
+        self.info(format!("{name} added “{title}” to the queue."));
+        if let Along::Hosting { host, added, .. } = &mut self.along {
+            host.answer(&from, id, Answer::Added);
+            added.entry(from).or_default().push(id);
+        }
+    }
+
+    /// Host: "<name> wants to add <song>" with Add / Ignore.
+    pub(super) fn song_requests_ui(&mut self, ui: &mut egui::Ui) {
+        let Along::Hosting { pending, .. } = &self.along else { return };
+        let mut choice = None;
+        for (i, p) in pending.iter().enumerate() {
+            ui.horizontal(|ui| {
+                ui.label(RichText::new(format!("🎵 {} wants to add “{}”", p.name, p.track.title)).color(accent()));
+                if ui.small_button("Add").clicked() {
+                    choice = Some((i, true));
+                }
+                if ui.small_button("Ignore").clicked() {
+                    choice = Some((i, false));
+                }
+            });
+        }
+        let Some((i, add)) = choice else { return };
+        let Along::Hosting { host, pending, .. } = &mut self.along else { return };
+        let p = pending.remove(i);
+        if add {
+            self.add_requested(p.from, &p.name, p.track);
+        } else {
+            host.answer(&p.from, p.track.id, Answer::Declined);
+        }
+    }
+
     pub(super) fn discord_event(&mut self, e: crate::discord::Incoming) {
         use crate::discord::Incoming;
         match e {
@@ -337,6 +531,7 @@ impl App {
 
     /// The 👥 button in the player bar and its menu.
     pub(super) fn along_button(&mut self, ui: &mut egui::Ui) {
+        let rules_before = self.along_rules;
         let active = !matches!(self.along, Along::Off);
         let label = match &self.along {
             Along::Hosting { listeners, .. } if *listeners > 0 => format!("👥 {listeners}"),
@@ -395,13 +590,39 @@ impl App {
                         if self.discord_on {
                             ui.label(RichText::new("Friends can also join from your Discord status.").small().color(muted()));
                         }
+                        ui.separator();
+                        let rules = &mut self.along_rules;
+                        ui.checkbox(&mut rules.open, "Let listeners add songs");
+                        if rules.open {
+                            ui.horizontal(|ui| {
+                                ui.label("Each person can have");
+                                let shown = rules.limit.map_or("any number of".to_string(), |n| n.to_string());
+                                egui::ComboBox::from_id_salt("along-limit").selected_text(shown).show_ui(ui, |ui| {
+                                    for n in [1, 2, 3, 5, 10] {
+                                        ui.selectable_value(&mut rules.limit, Some(n), n.to_string());
+                                    }
+                                    ui.selectable_value(&mut rules.limit, None, "any number of");
+                                });
+                                ui.label("songs waiting");
+                            });
+                            ui.checkbox(&mut rules.auto, "Add them automatically")
+                                .on_hover_text("Off: you'll see each request at the top of Cumulus and can add or ignore it.");
+                        }
+                        ui.separator();
                         if ui.button("End session").clicked() {
                             action = Some(AlongAction::Stop);
                         }
                     }
-                    Along::Following { connected, .. } => {
+                    Along::Following { connected, target, .. } => {
                         let what = if *connected { "You're listening along." } else { "Connecting…" };
                         ui.label(RichText::new(what).color(muted()));
+                        if target.is_some_and(|(s, _)| s.requests) {
+                            ui.label(
+                                RichText::new("The host takes requests: right-click a song → Add to session queue. They'll see your SoundCloud name.")
+                                    .small()
+                                    .color(muted()),
+                            );
+                        }
                         if ui.button("Leave").clicked() {
                             action = Some(AlongAction::Stop);
                         }
@@ -419,6 +640,9 @@ impl App {
             Some(AlongAction::Stop) => self.stop_along(),
             Some(AlongAction::Copied) => self.info("Code copied."),
             None => {}
+        }
+        if self.along_rules != rules_before {
+            self.along_rules.save();
         }
     }
 
