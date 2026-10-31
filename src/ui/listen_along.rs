@@ -15,8 +15,8 @@ use crate::listen::{self, Event, State};
 use crate::player::QueueItem;
 
 /// The relay Cumulus uses unless config.json's `listen_server` says
-/// otherwise. None until it's deployed.
-const DEFAULT_SERVER: Option<&str> = None;
+/// otherwise (server/listen-along, on Cloudflare).
+const DEFAULT_SERVER: Option<&str> = Some("wss://cumulus-listen.cumulus-app.workers.dev");
 
 /// Most people in a session, host included (the relay allows 20 listeners).
 pub(super) const MAX_PEOPLE: usize = 21;
