@@ -29,8 +29,11 @@ pub(super) fn party_id(room: &str) -> String {
 
 /// How far a listener may drift from the host before it seeks.
 const MAX_DRIFT_SECS: f64 = 2.5;
-/// A host re-sends where it is this often, so listeners stay in step.
-const HEARTBEAT: Duration = Duration::from_secs(10);
+/// A host re-sends where it is this often even when nothing changed.
+/// Changes (skips, pauses, seeks, stalls) go out at once anyway, and
+/// listeners check themselves every second, so this can be long: the
+/// relay's rooms can sleep in between, which keeps Cloudflare usage down.
+const HEARTBEAT: Duration = Duration::from_secs(30);
 
 pub(super) enum Along {
     Off,

@@ -236,8 +236,9 @@ fn session(
                 return Exit::Lost(e.to_string());
             }
         }
-        // Keep idle connections alive through proxies.
-        if pinged.elapsed() > Duration::from_secs(30) {
+        // Keep idle connections alive (Cloudflare drops ones silent for
+        // about 100 s), without waking the relay more than needed.
+        if pinged.elapsed() > Duration::from_secs(60) {
             pinged = Instant::now();
             if ws.send(Message::Ping(Vec::new().into())).is_err() {
                 return Exit::Lost("ping failed".into());
