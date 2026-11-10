@@ -37,6 +37,13 @@ pub fn save_token(token: &str) -> Result<(), String> {
 /// profile (site cookies); an expired login keeps it, so SoundCloud may still
 /// remember you and the next sign-in can be quick (or automatic).
 pub fn sign_out(forget_browser: bool) {
+    // Debug builds pointed at a test data folder (CUMULUS_DEV_DATA) share the
+    // real saved login: never delete it from a test.
+    #[cfg(debug_assertions)]
+    if std::env::var_os("CUMULUS_DEV_DATA").is_some() {
+        eprintln!("dev: sign-out leaves the saved login alone (test data folder)");
+        return;
+    }
     if let Ok(e) = entry() {
         let _ = e.delete_credential();
     }

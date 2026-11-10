@@ -1,12 +1,18 @@
 //! Audio output. A dedicated thread owns the cpal stream (always stereo f32,
 //! opened at the track's own sample rate; WASAPI's built-in resampler matches
 //! it to the device). The stream callback pulls from `SampleQueue`.
+//!
+//! The thread also watches the stream while playing: if it stops asking for
+//! audio (a device that went to sleep or was unplugged often stops without
+//! reporting an error) or reports an error, it's reopened; and with no
+//! device chosen, it follows Windows when the default device changes.
 
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
-use std::sync::mpsc::{Receiver, Sender, channel};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicU64, Ordering};
+use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel};
 use std::sync::{Arc, Mutex};
 use std::thread;
+use std::time::{Duration, Instant};
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
@@ -104,6 +110,9 @@ pub struct Shared {
     pub viz_on: AtomicBool,
     pub viz: Mutex<Vec<f32>>,
     pub viz_rate: AtomicU32,
+    /// Bumped by every stream callback: if it stops moving while playing,
+    /// the stream has stalled.
+    pub callbacks: AtomicU64,
 }
 
 impl Shared {
@@ -124,6 +133,7 @@ impl Shared {
             viz_on: AtomicBool::new(false),
             viz: Mutex::new(Vec::new()),
             viz_rate: AtomicU32::new(0),
+            callbacks: AtomicU64::new(0),
         }
     }
 }
@@ -178,60 +188,113 @@ impl Output {
     }
 }
 
-fn run(shared: Arc<Shared>, rx: Receiver<Cmd>, current_rate: Arc<AtomicU32>) {
-    let broken = Arc::new(AtomicBool::new(false));
-    let mut stream: Option<cpal::Stream> = None;
-    let mut rate = 0;
-    let mut playing = false;
-    for cmd in rx {
-        match cmd {
-            Cmd::Reopen if rate != 0 && stream.is_some() => {
-                stream = None;
-                broken.store(false, Ordering::Relaxed);
-                match open(shared.clone(), rate, broken.clone()) {
-                    Ok(s) => {
-                        let _ = if playing { s.play() } else { s.pause() };
-                        stream = Some(s);
-                    }
-                    Err(e) => eprintln!("cumulus audio: {e}"),
-                }
+/// The output thread's stream and what it was opened for.
+struct Out {
+    shared: Arc<Shared>,
+    broken: Arc<AtomicBool>,
+    stream: Option<cpal::Stream>,
+    /// The device it's on (to notice the default changing).
+    device: Option<String>,
+    rate: u32,
+    playing: bool,
+}
+
+impl Out {
+    /// (Re)opens the stream at `self.rate`, playing or paused as wanted.
+    fn reopen(&mut self) {
+        self.stream = None;
+        self.broken.store(false, Ordering::Relaxed);
+        match open(self.shared.clone(), self.rate, self.broken.clone()) {
+            Ok((s, device)) => {
+                let _ = if self.playing { s.play() } else { s.pause() };
+                self.stream = Some(s);
+                self.device = Some(device);
             }
-            Cmd::Reopen => {}
-            Cmd::Configure(r) => {
-                if r == rate && stream.is_some() && !broken.load(Ordering::Relaxed) {
+            Err(e) => {
+                crate::log::line(&format!("audio: couldn't open the output: {e}"));
+                self.device = None;
+            }
+        }
+    }
+}
+
+/// How often the output is checked while playing.
+const WATCH: Duration = Duration::from_secs(1);
+/// Checks in a row without audio going out before the stream is reopened.
+const STALLED_CHECKS: u32 = 2;
+/// How often to look for a new default device.
+const DEFAULT_CHECK: Duration = Duration::from_secs(3);
+
+fn run(shared: Arc<Shared>, rx: Receiver<Cmd>, current_rate: Arc<AtomicU32>) {
+    let mut out = Out { shared: shared.clone(), broken: Arc::new(AtomicBool::new(false)), stream: None, device: None, rate: 0, playing: false };
+    let mut last_callbacks = 0;
+    let mut quiet = 0u32;
+    let mut default_checked = Instant::now();
+    loop {
+        match rx.recv_timeout(WATCH) {
+            Ok(Cmd::Reopen) if out.rate != 0 && out.stream.is_some() => out.reopen(),
+            Ok(Cmd::Reopen) => {}
+            Ok(Cmd::Configure(r)) => {
+                if r == out.rate && out.stream.is_some() && !out.broken.load(Ordering::Relaxed) {
                     continue;
                 }
-                stream = None;
-                rate = r;
+                out.rate = r;
                 current_rate.store(r, Ordering::Relaxed);
-                broken.store(false, Ordering::Relaxed);
-                match open(shared.clone(), r, broken.clone()) {
-                    Ok(s) => {
-                        if playing {
-                            let _ = s.play();
-                        } else {
-                            let _ = s.pause();
-                        }
-                        stream = Some(s);
-                    }
-                    Err(e) => eprintln!("cumulus audio: {e}"),
-                }
+                out.reopen();
             }
-            Cmd::Play => {
-                playing = true;
-                // Device unplugged / default device changed: reopen.
-                if broken.load(Ordering::Relaxed) && rate != 0 {
-                    stream = open(shared.clone(), rate, broken.clone()).ok();
-                    broken.store(false, Ordering::Relaxed);
-                }
-                if let Some(s) = &stream {
+            Ok(Cmd::Play) => {
+                out.playing = true;
+                quiet = 0;
+                // Device unplugged / errored: reopen.
+                if (out.broken.load(Ordering::Relaxed) || out.stream.is_none()) && out.rate != 0 {
+                    out.reopen();
+                } else if let Some(s) = &out.stream {
                     let _ = s.play();
                 }
             }
-            Cmd::Pause => {
-                playing = false;
-                if let Some(s) = &stream {
+            Ok(Cmd::Pause) => {
+                out.playing = false;
+                if let Some(s) = &out.stream {
                     let _ = s.pause();
+                }
+            }
+            Err(RecvTimeoutError::Disconnected) => return,
+            Err(RecvTimeoutError::Timeout) => {}
+        }
+        if !out.playing || out.rate == 0 {
+            quiet = 0;
+            continue;
+        }
+        // Watchdog: is audio still going out?
+        let n = shared.callbacks.load(Ordering::Relaxed);
+        let stalled = n == last_callbacks || out.stream.is_none() || out.broken.load(Ordering::Relaxed);
+        last_callbacks = n;
+        quiet = if stalled { quiet + 1 } else { 0 };
+        if quiet >= STALLED_CHECKS {
+            let why = if out.broken.load(Ordering::Relaxed) {
+                "the device reported an error"
+            } else if out.stream.is_none() {
+                "it wasn't open"
+            } else {
+                "it stopped taking audio"
+            };
+            crate::log::line(&format!("audio: reopening the output ({why}; device {:?})", out.device));
+            out.reopen();
+            last_callbacks = shared.callbacks.load(Ordering::Relaxed);
+            quiet = 0;
+            continue;
+        }
+        // No device chosen: follow Windows' default (e.g. headphones
+        // plugged in, or a monitor's speakers going to sleep).
+        if default_checked.elapsed() >= DEFAULT_CHECK {
+            default_checked = Instant::now();
+            let chosen = shared.device.lock().ok().and_then(|d| d.clone());
+            if chosen.is_none() {
+                let default = cpal::default_host().default_output_device().and_then(|d| device_name(&d));
+                if default.is_some() && default != out.device {
+                    crate::log::line(&format!("audio: default device changed from {:?} to {default:?}", out.device));
+                    out.reopen();
+                    last_callbacks = shared.callbacks.load(Ordering::Relaxed);
                 }
             }
         }
@@ -241,7 +304,7 @@ fn run(shared: Arc<Shared>, rx: Receiver<Cmd>, current_rate: Arc<AtomicU32>) {
 /// Opens the device stream for audio at the track's `rate`. Playback speed
 /// works like a record player: the stream claims a faster/slower rate and
 /// Windows' resampler does the rest (pitch follows speed).
-fn open(shared: Arc<Shared>, rate: u32, broken: Arc<AtomicBool>) -> Result<cpal::Stream, String> {
+fn open(shared: Arc<Shared>, rate: u32, broken: Arc<AtomicBool>) -> Result<(cpal::Stream, String), String> {
     let host = cpal::default_host();
     let wanted = shared.device.lock().ok().and_then(|d| d.clone());
     // The chosen device if it's still there, else the system default.
@@ -258,17 +321,21 @@ fn open(shared: Arc<Shared>, rate: u32, broken: Arc<AtomicBool>) -> Result<cpal:
     };
     let mut eq = super::eq::Equalizer::new(rate);
     shared.viz_rate.store(rate, Ordering::Relaxed);
-    device
+    let name = device_name(&device).unwrap_or_default();
+    let stream = device
         .build_output_stream::<f32, _, _>(
             config,
             move |data, _| fill(&shared, &mut eq, data),
             move |e| {
-                eprintln!("cumulus audio stream: {e}");
-                broken.store(true, Ordering::Relaxed);
+                // Only the first error of a stream is worth logging.
+                if !broken.swap(true, Ordering::Relaxed) {
+                    crate::log::line(&format!("audio: stream error: {e}"));
+                }
             },
             None,
         )
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    Ok((stream, name))
 }
 
 fn device_name(d: &cpal::Device) -> Option<String> {
@@ -286,6 +353,7 @@ pub fn device_names() -> Vec<String> {
 /// Stream callback: copy queued samples out, equalize, apply volume, pad
 /// with silence.
 fn fill(shared: &Shared, eq: &mut super::eq::Equalizer, data: &mut [f32]) {
+    shared.callbacks.fetch_add(1, Ordering::Relaxed);
     let gain = {
         let v = f32::from_bits(shared.volume.load(Ordering::Relaxed));
         v * v

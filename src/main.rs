@@ -10,6 +10,7 @@ mod dialogs;
 mod discord;
 mod download;
 mod listen;
+mod log;
 #[cfg(target_os = "linux")]
 mod gtk_thread;
 mod local;

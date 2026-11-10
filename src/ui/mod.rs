@@ -322,6 +322,9 @@ pub struct App {
     was_focused: bool,
     /// A refused login is being checked / renewed in the background.
     renewing: bool,
+    /// The track that couldn't play because the login had expired: played
+    /// again once it's renewed.
+    resume_after_renewal: Option<u64>,
     /// Listen along: hosting, following, or neither.
     along: listen_along::Along,
     /// Listen along: the code typed into "Join".
@@ -553,6 +556,7 @@ impl App {
             recheck_on_focus: None,
             was_focused: true,
             renewing: false,
+            resume_after_renewal: None,
             last_renewal: None,
             along: listen_along::Along::Off,
             along_code: String::new(),
@@ -802,7 +806,7 @@ impl App {
     fn login_renewal(&mut self, result: Renewal) {
         self.renewing = false;
         match result {
-            Renewal::StillValid => {}
+            Renewal::StillValid => self.resume_after_login(),
             Renewal::Failed => {
                 self.last_renewal = Some(Instant::now());
                 self.sign_out(Some(ApiError::Unauthorized.to_string()));
@@ -815,6 +819,8 @@ impl App {
                 }
                 self.api.set_token(auth::load_token().ok().flatten());
                 self.info("Your SoundCloud login was renewed.");
+                crate::log::line("login renewed");
+                self.resume_after_login();
                 self.load_liked();
                 let started: Vec<FeedKind> = self.feeds.iter().filter(|(_, f)| f.started).map(|(k, _)| *k).collect();
                 for kind in started {
@@ -827,7 +833,23 @@ impl App {
         }
     }
 
+    /// Plays the track that stopped for an expired login, if it's still the
+    /// current one.
+    fn resume_after_login(&mut self) {
+        let Some(id) = self.resume_after_renewal.take() else { return };
+        if self.queue.current_id() == Some(id) && self.player.now().is_none_or(|(i, _)| i != id) {
+            if let Some(item) = self.queue.current().cloned() {
+                self.player.play(item, 0.0);
+                self.player.set_next(self.queue.peek_next());
+            }
+        }
+    }
+
     fn sign_out(&mut self, error: Option<String>) {
+        if error.is_some() {
+            crate::log::line("signed out: the login was refused and couldn't be renewed");
+        }
+        self.resume_after_renewal = None;
         self.player.stop();
         self.queue = Queue::default();
         self.resume_at = None;
@@ -1113,6 +1135,20 @@ impl App {
             Msg::Player(player::Event::Failed { id, reason, upcoming }) => {
                 let title = self.queue_title(id);
                 let drm = reason == player::DRM_REASON;
+                if !drm {
+                    crate::log::line(&format!("track {id} couldn't play: {reason}"));
+                }
+                // "Login expired" from the player: the track isn't the
+                // problem. Renew the login (quietly if possible) and play it
+                // again then, instead of skipping track after track.
+                if reason == ApiError::Unauthorized.to_string() {
+                    if !upcoming {
+                        self.resume_after_renewal = Some(id);
+                        self.info("Your SoundCloud login needs renewing…");
+                    }
+                    self.login_refused();
+                    return;
+                }
                 self.error(format!("Skipped \u{201c}{title}\u{201d}: {reason}"));
                 self.queue.mark_unplayable(id);
                 if upcoming {
@@ -1124,6 +1160,7 @@ impl App {
                         self.failures += 1;
                     }
                     if self.failures >= MAX_FAILURES {
+                        crate::log::line("stopped: several tracks in a row couldn't be played");
                         self.error("Stopped: several tracks in a row couldn't be played.");
                         self.player.stop();
                     } else if let Some(item) = self.queue.advance() {
@@ -1544,6 +1581,7 @@ impl App {
                 if since.elapsed() >= Duration::from_secs(u64::from(self.skip_stuck_secs)) {
                     self.stuck_check = None;
                     let title = self.queue_title(id);
+                    crate::log::line(&format!("track {id} got stuck at {:.1}s, skipped", pos.max(0.0)));
                     self.error(format!("“{title}” got stuck, so it was skipped."));
                     self.next();
                 }

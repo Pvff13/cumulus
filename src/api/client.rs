@@ -195,7 +195,13 @@ pub struct Api {
     agent: Agent,
     client_id: Mutex<Option<String>>,
     token: Mutex<Option<String>>,
+    /// When the client_id was last re-discovered after a 403.
+    refreshed_on_403: Mutex<Option<std::time::Instant>>,
 }
+
+/// A 403 can mean a stale client_id, or a track that's simply blocked; look
+/// for a new client_id on a 403 at most this often.
+const REFRESH_ON_403_EVERY: Duration = Duration::from_secs(10 * 60);
 
 impl Api {
     pub fn new(cached_client_id: Option<String>) -> Self {
@@ -203,6 +209,7 @@ impl Api {
             agent: Agent::new(),
             client_id: Mutex::new(cached_client_id),
             token: Mutex::new(None),
+            refreshed_on_403: Mutex::new(None),
         }
     }
 
@@ -220,6 +227,15 @@ impl Api {
             return Ok(id);
         }
         self.refresh_client_id()
+    }
+
+    fn may_refresh_on_403(&self) -> bool {
+        let mut last = self.refreshed_on_403.lock().unwrap();
+        if last.is_some_and(|t| t.elapsed() < REFRESH_ON_403_EVERY) {
+            return false;
+        }
+        *last = Some(std::time::Instant::now());
+        true
     }
 
     fn refresh_client_id(&self) -> Result<String, ApiError> {
@@ -253,6 +269,16 @@ impl Api {
                     refreshed_id = true;
                 }
                 401 => return Err(ApiError::Unauthorized),
+                // Stream links answer a rotated client_id with 403 instead.
+                403 if !refreshed_id && self.may_refresh_on_403() => {
+                    let new = self.refresh_client_id()?;
+                    crate::log::line(&format!("api: 403, client_id re-discovered ({})", if new == client_id { "unchanged" } else { "changed" }));
+                    if new == client_id {
+                        return Err(ApiError::Forbidden);
+                    }
+                    client_id = new;
+                    refreshed_id = true;
+                }
                 403 => return Err(ApiError::Forbidden),
                 404 => return Err(ApiError::NotFound),
                 429 => {
